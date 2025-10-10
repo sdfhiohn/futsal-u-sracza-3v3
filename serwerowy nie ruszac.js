@@ -102,13 +102,13 @@
 
 /* ROOM */
 
-const roomName = '🏆⚽ |testroom | ⚽🏆';
+const roomName = '🏆⚽ |Futsal 3v3| Pod Sraczem | ⚽🏆';
 const maxPlayers = 18;
-const roomPublic = false;
-const token = "thr1.AAAAAGjlTdMgTt8zFTZ5lg.KaMBiDVjgvc"; // Insert token here
+const roomPublic = true;
+const token = "thr1.AAAAAGjmUdI8BRNsGPSJoQ.ktgrlLoSdj0"; // Insert token here
 
-var roomWebhook = ''; // this webhook is used to send the details of the room (chat, join, leave) ; it should be in a private discord channel
-var gameWebhook = ''; // this webhook is used to send the summary of the games ; it should be in a public discord channel
+var roomWebhook = 'https://discord.com/api/webhooks/1417845044651626566/vZdV_vQDAU1n4dcwJnTWKUYYVQZExQrRd0HoC8gvXgQkIupqHfZplwt_ZtYRzVfsNxmT'; // this webhook is used to send the details of the room (chat, join, leave) ; it should be in a private discord channel
+var gameWebhook = 'https://discord.com/api/webhooks/1417844778112122973/eTZ_4hNdpMXgzUR68Brw9bQbyzhhptNj3oh-2SS8BPjQLlFmX5UPbzQqV4DaJgcxWjDx'; // this webhook is used to send the summary of the games ; it should be in a public discord channel
 var fetchRecordingVariable = true;
 var timeLimit = 3;
 var scoreLimit = 3;
@@ -147,7 +147,7 @@ var drawTimeLimit = 1;
 var teamSize = 3;
 var maxAdmins = 0;
 var disableBans = false;
-var debugMode = true;
+var debugMode = false;
 var afkLimit = debugMode ? Infinity : 12;
 
 var defaultSlowMode = 0.5;
@@ -1986,8 +1986,49 @@ function deactivateChooseMode() {
     blueCaptainChoice = '';
 }
 
+const fallbackRankTable = [
+    { max: 850, label: 'Gówienko' },
+    { max: 950, label: 'Żółtodziób' },
+    { max: 1050, label: 'Początkujący' },
+    { max: 1199, label: 'Gracz' },
+    { max: 1299, label: 'Kox' },
+    { max: 1399, label: 'Mistrz' },
+    { max: 1550, label: 'Legenda' },
+    { max: Infinity, label: 'Nieśmiertelny' },
+];
+
+const fallbackRankBadges = {
+    'Gówienko': '💩',
+    'Żółtodziób': '🐣',
+    'Początkujący': '⚪',
+    'Gracz': '🥉',
+    'Kox': '🥈',
+    'Mistrz': '🥇',
+    'Legenda': '👑',
+    'Nieśmiertelny': '🔥',
+};
+
+function fallbackClassLabelFromRating(rating) {
+    var value = Number(rating);
+    if (!isFinite(value)) value = 1000;
+    for (var i = 0; i < fallbackRankTable.length; i++) {
+        if (value <= fallbackRankTable[i].max) {
+            return fallbackRankTable[i].label;
+        }
+    }
+    return 'Nieśmiertelny';
+}
+
+function fallbackBadgeFromLabel(label) {
+    return fallbackRankBadges[label] || '😶';
+}
+
 function getSpecList(player) {
     if (player == null) return null;
+    const g = (typeof globalThis !== 'undefined') ? globalThis : (typeof window !== 'undefined' ? window : {});
+    const ensureProfileFn = typeof g.ensureProfile === 'function' ? g.ensureProfile : null;
+    const classLabelFn = typeof g.classLabel === 'function' ? g.classLabel : null;
+    const rankEmojiFn = typeof g.rankEmoji === 'function' ? g.rankEmoji : null;
     var cstm = 'Gracze : ';
     for (var i = 0; i < teamSpec.length; i++) {
         var p = teamSpec[i];
@@ -2000,17 +2041,26 @@ function getSpecList(player) {
             }
             if (aid) {
                 // Upewnij się, że profil istnieje
-                try { ensureProfile(aid, p && p.name ? p.name : undefined); } catch(_e) {}
-                var r = Number(elo && elo.ratings ? elo.ratings[aid] : NaN);
-                if (!isFinite(r)) r = 1000; // domyślnie 1000
-                var lab = classLabel(r);
-                // Mapowanie etykiety → emoji
-                badge = rankEmoji(lab);
-            } else {
-                badge = "😶";
+                if (ensureProfileFn) {
+                    try { ensureProfileFn(aid, p && p.name ? p.name : undefined); } catch(_e) {}
+                }
+                var store = (typeof globalThis !== 'undefined' && globalThis.__eloStore) ? globalThis.__eloStore : null;
+                var ratings = store && store.ratings;
+            var r = Number(ratings && ratings[aid] != null ? ratings[aid] : NaN);
+            if (!isFinite(r)) r = 1000; // domyślnie 1000
+            var lab = classLabelFn ? classLabelFn(r) : fallbackClassLabelFromRating(r);
+            badge = rankEmojiFn && lab ? rankEmojiFn(lab) : fallbackBadgeFromLabel(lab);
+            if (!badge || badge === '😶') {
+                badge = fallbackBadgeFromLabel(lab);
             }
-        } catch (e) {
-            // W razie błędu nie psuj listy wyboru
+        } else {
+            badge = "😶";
+        }
+    } catch (e) {
+        // W razie błędu nie psuj listy wyboru
+        badge = "😶";
+    }
+        if (!badge) {
             badge = "😶";
         }
         cstm += (badge ? (badge + ' ') : '') + p.name + '[' + (i + 1) + '], ';
@@ -3676,23 +3726,16 @@ room.onGameStop = function (byPlayer) {
 
 room.onGamePause = function (byPlayer) {
     if (mentionPlayersUnpause && gameState == State.PAUSE) {
-        if (byPlayer != null) {
-            room.sendAnnouncement(
-                `Gra zatrzymana przez ${byPlayer.name}!`,
-                player.id,
-                defaultColor,
-                'bold',
-                HaxNotification.NONE
-            );
-        } else {
-            room.sendAnnouncement(
-                `Gra zatrzymana!`,
-                player.id,
-                defaultColor,
-                'bold',
-                HaxNotification.NONE
-            );
-        }
+        const pauseMsg = byPlayer != null
+            ? `Gra zatrzymana przez ${byPlayer.name}!`
+            : `Gra zatrzymana!`;
+        room.sendAnnouncement(
+            pauseMsg,
+            null,
+            defaultColor,
+            'bold',
+            HaxNotification.NONE
+        );
     }
     clearTimeout(unpauseTimeout);
     gameState = State.PAUSE;
@@ -3703,23 +3746,16 @@ room.onGameUnpause = function (byPlayer) {
         gameState = State.PLAY;
     }, 2000);
     if (mentionPlayersUnpause) {
-        if (byPlayer != null) {
-            room.sendAnnouncement(
-                `Gra wznowiona przez ${byPlayer.name}!`,
-                player.id,
-                defaultColor,
-                'bold',
-                HaxNotification.NONE
-            );
-        } else {
-            room.sendAnnouncement(
-                `Gra wznowiona!`,
-                player.id,
-                defaultColor,
-                'bold',
-                HaxNotification.NONE
-            );
-        }
+        const unpauseMsg = byPlayer != null
+            ? `Gra wznowiona przez ${byPlayer.name}!`
+            : `Gra wznowiona!`;
+        room.sendAnnouncement(
+            unpauseMsg,
+            null,
+            defaultColor,
+            'bold',
+            HaxNotification.NONE
+        );
     }
     if (
         (teamRed.length == teamSize && teamBlue.length == teamSize && chooseMode) ||
@@ -3874,20 +3910,90 @@ room.onGameTick = function () {
   const START_BUFFER_MS = 25_000;
   const LEAVE_PENALTY = 25;
 
-  // persistent-ish stores (in-memory). Consider serializing if you need persistence across restarts.
-  const elo = globalThis.__eloStore || (globalThis.__eloStore = {
-    ratings: Object.create(null),     // authId -> number
-    games: Object.create(null),       // authId -> count
-    names: Object.create(null)        // authId -> last seen name
-  });
+  const ELO_STORAGE_KEY = "__eloStore";
+
+  function makeEmptyEloStore(){
+    return {
+      ratings: Object.create(null),
+      games: Object.create(null),
+      names: Object.create(null)
+    };
+  }
+
+  function reviveEloStore(rawObj){
+    const store = makeEmptyEloStore();
+    if (!rawObj || typeof rawObj !== "object") return store;
+
+    if (rawObj.ratings && typeof rawObj.ratings === "object"){
+      for (const [key, value] of Object.entries(rawObj.ratings)){
+        if (value != null) store.ratings[key] = Number(value);
+      }
+    }
+    if (rawObj.games && typeof rawObj.games === "object"){
+      for (const [key, value] of Object.entries(rawObj.games)){
+        if (value != null) store.games[key] = Number(value);
+      }
+    }
+    if (rawObj.names && typeof rawObj.names === "object"){
+      for (const [key, value] of Object.entries(rawObj.names)){
+        if (typeof value === "string") store.names[key] = value;
+      }
+    }
+    return store;
+  }
+
+  function loadEloStore(){
+    try{
+      const raw = localStorage.getItem(ELO_STORAGE_KEY);
+      if (!raw) return null;
+      return reviveEloStore(JSON.parse(raw));
+    }catch(_){
+      return null;
+    }
+  }
+
+  const persistedStore = loadEloStore();
+  if (!globalThis.__eloStore){
+    globalThis.__eloStore = persistedStore || makeEmptyEloStore();
+  } else if (persistedStore){
+    // Merge persisted data into existing store (keep live references).
+    for (const [key, value] of Object.entries(persistedStore.ratings)){
+      globalThis.__eloStore.ratings[key] = value;
+    }
+    for (const [key, value] of Object.entries(persistedStore.games)){
+      globalThis.__eloStore.games[key] = value;
+    }
+    for (const [key, value] of Object.entries(persistedStore.names)){
+      globalThis.__eloStore.names[key] = value;
+    }
+  }
+
+  const elo = globalThis.__eloStore;
+  if (!elo.ratings) elo.ratings = Object.create(null);
+  if (!elo.games) elo.games = Object.create(null);
+  if (!elo.names) elo.names = Object.create(null);
+  globalThis.eloStore = elo;
+
+  function saveEloStore(){
+    try{
+      const payload = {
+        ratings: elo.ratings,
+        games: elo.games,
+        names: elo.names
+      };
+      localStorage.setItem(ELO_STORAGE_KEY, JSON.stringify(payload));
+    }catch(_){}
+  }
 
   // Match state
   const state = globalThis.__eloState || (globalThis.__eloState = {
     active: false,
     kickoffAt: 0,
     score: { red: 0, blue: 0 },
-    settled: false
+    settled: false,
+    ranked: false
   });
+  if (typeof state.ranked !== "boolean") state.ranked = false;
   // track who triggered potential walkover (leave/afk) to resolve on onGameStop if needed
   const pendingWalkover = globalThis.__eloPendingWalkover || (globalThis.__eloPendingWalkover = {
     authId: null,
@@ -3904,12 +4010,40 @@ room.onGameTick = function () {
 
   // ---- helpers ----
   function getAuthIdByPlayer(player){
-    return (player && (player.auth || player.conn || String(player.id))) || String(player?.id || "?");
+    if (!player){
+      return "?";
+    }
+    try{
+      if (typeof authArray !== "undefined" && authArray[player.id]){
+        const arrEntry = authArray[player.id];
+        if (Array.isArray(arrEntry) && arrEntry.length > 0){
+          return arrEntry[0];
+        }
+      }
+    }catch(_){}
+    if (player.auth){
+      return player.auth;
+    }
+    if (player.conn){
+      return player.conn;
+    }
+    return String(player.id ?? "?");
   }
   function ensureProfile(authId, name){
-    if (!(authId in elo.ratings)) elo.ratings[authId] = ELO_R0;
-    if (!(authId in elo.games)) elo.games[authId] = 0;
-    if (name) elo.names[authId] = name;
+    let changed = false;
+    if (!(authId in elo.ratings)){
+      elo.ratings[authId] = ELO_R0;
+      changed = true;
+    }
+    if (!(authId in elo.games)){
+      elo.games[authId] = 0;
+      changed = true;
+    }
+    if (name && elo.names[authId] !== name){
+      elo.names[authId] = name;
+      changed = true;
+    }
+    if (changed) saveEloStore();
   }
   function kFactor(authId){
     const g = elo.games[authId] || 0;
@@ -3922,10 +4056,37 @@ room.onGameTick = function () {
   }
   function isThreeVThreeNow(){
     try{
-      const rc = room.getPlayerList().filter(p=>p.team===1).length;
-      const bc = room.getPlayerList().filter(p=>p.team===2).length;
-      return rc===3 && bc===3;
+      const rc = room.getPlayerList().filter(p=>p.team===Team.RED).length;
+      const bc = room.getPlayerList().filter(p=>p.team===Team.BLUE).length;
+      return rc===teamSize && bc===teamSize;
     }catch(_){ return false; }
+  }
+  function spectatorCount(excludeAuthId){
+    try{
+      const specs = getTeamPlayers(Team.SPECTATORS);
+      if (!Array.isArray(specs)) return 0;
+      let count = 0;
+      for (const spec of specs){
+        try{
+          if (excludeAuthId != null && getAuthIdByPlayer(spec) === excludeAuthId) continue;
+        }catch(_){}
+        count += 1;
+      }
+      return count;
+    }catch(_){ return 0; }
+  }
+  function hasSpectatorAvailable(excludeAuthId){
+    return spectatorCount(excludeAuthId) > 0;
+  }
+  function shouldDeclareWalkover(teamId, excludeAuthId){
+    if (!state.ranked) return false;
+    if (teamId !== Team.RED && teamId !== Team.BLUE) return false;
+    if (hasSpectatorAvailable(excludeAuthId)) return false;
+    try{
+      return getTeamPlayers(teamId).length < teamSize;
+    }catch(_){
+      return false;
+    }
   }
   function teamAuthsAtEnd(teamId){
     return getTeamPlayers(teamId).map(p => getAuthIdByPlayer(p));
@@ -3988,6 +4149,7 @@ room.onGameTick = function () {
     elo.ratings[b] += dR;
     elo.games[b] += 1;
   }
+  saveEloStore();
 
   // --- wyślij prywatne powiadomienia do graczy ---
   const fmt = (x) => Number(x).toFixed(1);
@@ -4190,6 +4352,9 @@ function pickAvatarByRankLabel(label){
 
  function finalizeNaturalMatch(){
    // Only rank if the match ends as a true 3v3 (both teams exactly 3 players).
+   if (!state.ranked) {
+     return;
+   }
    if (!isThreeVThreeNow()) {
      return;
    }
@@ -4216,15 +4381,19 @@ function pickAvatarByRankLabel(label){
 
 
   function finalizeWalkoverDueToLeave(leaverAuth, leaverTeamId){
+    if (!shouldDeclareWalkover(leaverTeamId, leaverAuth)) {
+      return;
+    }
+    state.ranked = false;
     // Special rule per user spec:
     // - leaver gets only -25 (applied in leave/afk handler), excluded from ELO update
     // - leaver's TEAM (excluding leaver) gets WIN (S=1)
     // - opponent team gets LOSS (S=0)
-    const redAuths = teamAuthsAtEnd(1);
-    const blueAuths = teamAuthsAtEnd(2);
+    const redAuths = teamAuthsAtEnd(Team.RED);
+    const blueAuths = teamAuthsAtEnd(Team.BLUE);
     const exclude = new Set([leaverAuth]);
-    const sRed = (leaverTeamId === 1) ? 1 : 0;
-    const sBlue = (leaverTeamId === 2) ? 1 : 0;
+    const sRed = (leaverTeamId === Team.RED) ? 1 : 0;
+    const sBlue = (leaverTeamId === Team.BLUE) ? 1 : 0;
     updateEloForTeams({
       teamAAuths: redAuths,
       teamBAuths: blueAuths,
@@ -4240,42 +4409,38 @@ function pickAvatarByRankLabel(label){
       const pl = room.getPlayerList().find(p => getAuthIdByPlayer(p) === authId);
       const nowTeam = pl ? pl.team : 0;
       const elapsed = elapsedMsSinceKickoff();
-      if (state.active && nowTeam === 0 && (oldTeamId === 1 || oldTeamId === 2)){
+      if (state.active && state.ranked && nowTeam === Team.SPECTATORS && (oldTeamId === Team.RED || oldTeamId === Team.BLUE)){
         if (elapsed >= START_BUFFER_MS && !penalizedThisMatch.has(authId)){
           ensureProfile(authId);
           if (!Number.isFinite(elo.ratings[authId])) elo.ratings[authId] = 0;
           elo.ratings[authId] = Math.max(0, elo.ratings[authId] - LEAVE_PENALTY);
+          saveEloStore();
           penalizedThisMatch.add(authId);
           room.sendAnnouncement(`❌ Kara za AFK po 25s: -${LEAVE_PENALTY} ELO`, null);
 
-          // mark potential walkover
           pendingWalkover.authId = authId;
           pendingWalkover.teamId = oldTeamId;
           pendingWalkover.ts = Date.now();
 
-          const redCount = getTeamPlayers(1).length;
-          const blueCount = getTeamPlayers(2).length;
-          const teamNowCount = (oldTeamId === 1 ? redCount : blueCount);
-          if (teamNowCount < 3 && !state.settled){
-            finalizeWalkoverDueToLeave(authId, oldTeamId);
-            state.settled = true;
-            state.active = false;
-            // clear pending
-            pendingWalkover.authId = null; pendingWalkover.teamId = 0; pendingWalkover.ts = 0;
-          } else {
+          const attemptFinalizeWalkover = function(){
+            const canWalkover = shouldDeclareWalkover(oldTeamId, authId);
+            if (!state.settled && canWalkover){
+              finalizeWalkoverDueToLeave(authId, oldTeamId);
+              state.settled = true;
+              state.active = false;
+              state.ranked = false;
+              pendingWalkover.authId = null; pendingWalkover.teamId = 0; pendingWalkover.ts = 0;
+            } else if (!canWalkover && pendingWalkover.authId === authId){
+              pendingWalkover.authId = null; pendingWalkover.teamId = 0; pendingWalkover.ts = 0;
+            }
+          };
+
+          attemptFinalizeWalkover();
+          if (!state.settled){
             // race-condition guard: re-check after a short delay in case other handlers moved players
             setTimeout(function(){
               try{
-                if (!state.settled){
-                  const rc = getTeamPlayers(1).length;
-                  const bc = getTeamPlayers(2).length;
-                  const tnc = (oldTeamId === 1 ? rc : bc);
-                  if (tnc < 3){
-                    finalizeWalkoverDueToLeave(authId, oldTeamId);
-                    state.settled = true;
-                    state.active = false;
-                  }
-                }
+                attemptFinalizeWalkover();
               }catch(_){}
             }, 120);
           }
@@ -4303,6 +4468,16 @@ function pickAvatarByRankLabel(label){
       state.score.red = 0;
       state.score.blue = 0;
       state.settled = false;
+      try{
+        const redCount = getTeamPlayers(Team.RED).length;
+        const blueCount = getTeamPlayers(Team.BLUE).length;
+        state.ranked = (redCount === teamSize && blueCount === teamSize);
+      }catch(_){
+        state.ranked = false;
+      }
+      pendingWalkover.authId = null;
+      pendingWalkover.teamId = 0;
+      pendingWalkover.ts = 0;
     }catch(_){}
     if (typeof prev_onGameStart === "function") prev_onGameStart(byPlayer);
     try{ applyRankAvatarsOnKickoff(); }catch(_){}
@@ -4325,12 +4500,14 @@ function pickAvatarByRankLabel(label){
     try{
       if (!state.settled){
         // Prefer resolving recorded walkover (covers abrupt stops)
-        if (pendingWalkover.authId && (pendingWalkover.teamId === 1 || pendingWalkover.teamId === 2)){
-          finalizeWalkoverDueToLeave(pendingWalkover.authId, pendingWalkover.teamId);
+        if (pendingWalkover.authId && (pendingWalkover.teamId === Team.RED || pendingWalkover.teamId === Team.BLUE)){
+          if (shouldDeclareWalkover(pendingWalkover.teamId, pendingWalkover.authId)){
+            finalizeWalkoverDueToLeave(pendingWalkover.authId, pendingWalkover.teamId);
+            state.settled = true;
+          }
           // clear pending
           pendingWalkover.authId = null; pendingWalkover.teamId = 0; pendingWalkover.ts = 0;
-          state.settled = true;
-        } else if (isThreeVThreeNow()){
+        } else if (isThreeVThreeNow() && state.ranked){
           // True 3v3 natural finish
           finalizeNaturalMatch();
           state.settled = true;
@@ -4341,6 +4518,7 @@ function pickAvatarByRankLabel(label){
     }catch(_){}
     finally{
       state.active = false;
+      state.ranked = false;
     }
     if (typeof prev_onGameStop === "function") prev_onGameStop(byPlayer);
   };
@@ -4361,60 +4539,67 @@ function pickAvatarByRankLabel(label){
 
   const prev_onPlayerLeave = room.onPlayerLeave;
   room.onPlayerLeave = function(player){
+    let lastTeamBefore = Team.SPECTATORS;
+    let authLeave = null;
     try{
-      const aidLeave = getAuthIdByPlayer(player);
-      delete lastTeam[aidLeave];
+      authLeave = getAuthIdByPlayer(player);
+      if (authLeave != null && authLeave in lastTeam && typeof lastTeam[authLeave] === "number"){
+        lastTeamBefore = lastTeam[authLeave];
+      } else if (typeof player?.team === "number"){
+        lastTeamBefore = player.team;
+      }
+      if (authLeave != null){
+        delete lastTeam[authLeave];
+      }
     }catch(_){}
 
     try{
-      const a = getAuthIdByPlayer(player);
+      const a = authLeave != null ? authLeave : getAuthIdByPlayer(player);
       ensureProfile(a, player?.name);
+
+      const effectiveTeam = (typeof lastTeamBefore === "number") ? lastTeamBefore : player.team;
+      const wasSpectator = (effectiveTeam === Team.SPECTATORS);
 
       // Prefer authoritative game timer when available
       const elapsed = elapsedMsSinceKickoff();
-      if (state.active && elapsed >= START_BUFFER_MS){
+      if (!wasSpectator && state.active && state.ranked && elapsed >= START_BUFFER_MS){
           // Penalty for leaving after 25s (skip if already penalized this match via AFK)
-          if (!penalizedThisMatch.has(a)) {
-            elo.ratings[a] -= LEAVE_PENALTY;
-            penalizedThisMatch.add(a);
-            room.sendAnnouncement(`❌ Kara za wyjście po 25s: -${LEAVE_PENALTY} ELO`, null);
-          }
+         if (!penalizedThisMatch.has(a)) {
+           elo.ratings[a] -= LEAVE_PENALTY;
+           saveEloStore();
+           penalizedThisMatch.add(a);
+           room.sendAnnouncement(`❌ Kara za wyjście po 25s: -${LEAVE_PENALTY} ELO`, null);
+         }
 
           // mark potential walkover
           pendingWalkover.authId = a;
-          pendingWalkover.teamId = player.team;
+          pendingWalkover.teamId = effectiveTeam;
           pendingWalkover.ts = Date.now();
 
-          // Check for walkover due to underfilled team
-          const redCount = getTeamPlayers(1).length;
-          const blueCount = getTeamPlayers(2).length;
-          const leaverTeamId = player.team;
-          const teamNowCount = (leaverTeamId === 1 ? redCount : blueCount);
-          if (teamNowCount < 3 && !state.settled){
-            finalizeWalkoverDueToLeave(a, leaverTeamId);
-            state.settled = true;
-            state.active = false;
-            // clear pending
-            pendingWalkover.authId = null; pendingWalkover.teamId = 0; pendingWalkover.ts = 0;
-          } else {
+          const attemptFinalizeWalkover = function(){
+            const canWalkover = shouldDeclareWalkover(effectiveTeam, a);
+            if (!state.settled && canWalkover){
+              finalizeWalkoverDueToLeave(a, effectiveTeam);
+              state.settled = true;
+              state.active = false;
+              state.ranked = false;
+              pendingWalkover.authId = null; pendingWalkover.teamId = 0; pendingWalkover.ts = 0;
+            } else if (!canWalkover && pendingWalkover.authId === a){
+              pendingWalkover.authId = null; pendingWalkover.teamId = 0; pendingWalkover.ts = 0;
+            }
+          };
+
+          attemptFinalizeWalkover();
+          if (!state.settled){
             // race-condition guard: re-check a bit later
             setTimeout(function(){
               try{
-                if (!state.settled){
-                  const rc = getTeamPlayers(1).length;
-                  const bc = getTeamPlayers(2).length;
-                  const tnc = (leaverTeamId === 1 ? rc : bc);
-                  if (tnc < 3){
-                    finalizeWalkoverDueToLeave(a, leaverTeamId);
-                    state.settled = true;
-                    state.active = false;
-                  }
-                }
+                attemptFinalizeWalkover();
               }catch(_){}
             }, 120);
           }
       } else {
-          // <= 25s: ignore penalty; if the match ends as walkover here, that case is ignored by spec
+          // <= 25s or spectator: ignore penalty; if the match ends as walkover here, that case is ignored by spec
       }
     }catch(_){}
     if (typeof prev_onPlayerLeave === "function") prev_onPlayerLeave(player);
@@ -4428,11 +4613,12 @@ function pickAvatarByRankLabel(label){
       const newTeam = player.team;
       const oldTeam = (aid in lastTeam) ? lastTeam[aid] : newTeam;
       // Detect transition from playing (1/2) to SPECT (0) during active match
-      if (state.active && (oldTeam === 1 || oldTeam === 2) && newTeam === 0){
+      if (state.active && state.ranked && (oldTeam === Team.RED || oldTeam === Team.BLUE) && newTeam === Team.SPECTATORS){
         const elapsed = elapsedMsSinceKickoff();
         if (elapsed >= START_BUFFER_MS && !penalizedThisMatch.has(aid)){
           // Apply -25 only once per match
           elo.ratings[aid] -= LEAVE_PENALTY;
+          saveEloStore();
           penalizedThisMatch.add(aid);
           room.sendAnnouncement(`❌ Kara za AFK po 25s: -${LEAVE_PENALTY} ELO`, null);
 
@@ -4440,6 +4626,17 @@ function pickAvatarByRankLabel(label){
           pendingWalkover.authId = aid;
           pendingWalkover.teamId = oldTeam;
           pendingWalkover.ts = Date.now();
+
+          const canWalkover = shouldDeclareWalkover(oldTeam, aid);
+          if (!state.settled && canWalkover){
+            finalizeWalkoverDueToLeave(aid, oldTeam);
+            state.settled = true;
+            state.active = false;
+            state.ranked = false;
+            pendingWalkover.authId = null; pendingWalkover.teamId = 0; pendingWalkover.ts = 0;
+          } else if (!canWalkover && pendingWalkover.authId === aid){
+            pendingWalkover.authId = null; pendingWalkover.teamId = 0; pendingWalkover.ts = 0;
+          }
         }
       }
       // update lastTeam after processing
@@ -4582,6 +4779,22 @@ if (
 
   
 
+  // Expose selected helpers for code defined outside this IIFE.
+  try {
+    const setGlobalFn = (name, fn) => {
+      if (typeof fn === "function" && typeof globalThis[name] !== "function") {
+        globalThis[name] = fn;
+      }
+    };
+    setGlobalFn("getAuthIdByPlayer", getAuthIdByPlayer);
+    setGlobalFn("ensureProfile", ensureProfile);
+    setGlobalFn("classLabel", classLabel);
+    setGlobalFn("rankEmoji", rankEmoji);
+    setGlobalFn("rankColor", rankColor);
+    setGlobalFn("printUnifiedStatsLine", printUnifiedStatsLine);
+  } catch (_) {
+    // Ignore export errors in non-browser runtimes.
+  }
 }
 })();
 /* === Command: !rangi — progi ELO, nazwy i emoji === */
