@@ -1,2 +1,3 @@
 warto sobie potestowac plik, w tym celu właczyc debug mode, zaktualizowac token i wrzucic https://html5.haxball.com/headless 
 trzeba tez zmienic nazwe serwera bo inaczej nie ruszy, i polecam zmienic public mode na false
+i webhooki z dc tez chyba trzeba usunąć, a przynajmniej warto
