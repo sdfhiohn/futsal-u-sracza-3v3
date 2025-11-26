@@ -1,17 +1,17 @@
 /* ROOM */
-const roomName = '🏆⚽ |Futsaal 3v3| Pod Sraczem | ⚽🏆';
+const roomName = '🏆⚽ |Futsal 3v3| Pod Sraczem | ⚽🏆';
 const maxPlayers = 18;
-const roomPublic = false;
+const roomPublic = true;
 const token = "thr1.AAAAAGkmPLW9A4VNQs53SA.EtpFpTVdJfs"; // Insert token here
 
-var roomWebhook = 'https://discord.com/api/webhooks/1428483564244304005/olMyB0nIzI8TSv07DmM975VKgPBkyLB5cfa9hgZkFehLDaTIJivzpc4EorZtLO5Ej3Bf'; // Logi
-var gameWebhook = 'https://discord.com/api/webhooks/1431745228154601682/SMniOr_y2y8yvqCTC38sLKgoI5JJ-8zoF8hvpcINsr5hIUykAIaSO_m2tXGeKfF4aMvd'; //  raporty meczow
+var roomWebhook = 'https://discord.com/api/webhooks/1417845044651626566/vZdV_vQDAU1n4dcwJnTWKUYYVQZExQrRd0HoC8gvXgQkIupqHfZplwt_ZtYRzVfsNxmT'; // Logi
+var gameWebhook = 'https://discord.com/api/webhooks/1417844778112122973/eTZ_4hNdpMXgzUR68Brw9bQbyzhhptNj3oh-2SS8BPjQLlFmX5UPbzQqV4DaJgcxWjDx'; //  raporty meczow
 // --- NOWE WEBHOOKI ---
 // Webhook do listy graczy online (Status Roomu)
-var statusWebhook = "https://discord.com/api/webhooks/1431744558353613004/ZBf72rsnz4NjnChGVsDsOetW9hlQRi2AxTDylbxCVG_jqe41zXvxjCtQRfZwUU2BnShH"; 
+var statusWebhook = "https://discord.com/api/webhooks/1443065498756583560/p40RgjDs5NMNT1SstJh-8OskVES5BN6jVFDMz51Z1P_nP0tkK0v3yHe930T2_sf0Gv2S"; 
 
 // Webhook do rankingu ELO (Ranking po meczu)
-var rankingWebhook = "https://discord.com/api/webhooks/1431745384065273969/PekctvoJLXyQE8Kv8ARrHk2wRYIMIIEV6cDvfmQx9XKiBiDq5vkqfqre_5r2Tcc7vcUB"; 
+var rankingWebhook = "hthttps://discord.com/api/webhooks/1443065290207268987/iuZBbuilIQZieQlFEYo3d7nxwHU4tfddZvs_g0GSZRWWy2r6e6WVo3jDkOod0MiF9CO6"; 
 // ---------------------
 var fetchRecordingVariable = true;
 var timeLimit = 3;
@@ -143,7 +143,7 @@ var drawTimeLimit = 1;
 var teamSize = 3;
 var maxAdmins = 0;
 var disableBans = false;
-var debugMode = true;
+var debugMode = false;
 var afkLimit = debugMode ? Infinity : 12;
 
 var defaultSlowMode = 0.5;
@@ -7592,6 +7592,7 @@ function shopCommand(player, message) {
     var msgArray = message.split(/ +/);
     if (msgArray.length < 2) {
         room.sendAnnouncement(`🛒 SKLEP (Saldo: ${getCoins(player)})`, player.id, announcementColor, 'bold', HaxNotification.CHAT);
+        room.sendAnnouncement(`Przygotowujemy nowości: cieszynki oraz skiny za monetki (wkrótce w sklepie)!`, player.id, infoColor, 'small', HaxNotification.CHAT);
         for (var key in SHOP_ITEMS) {
             var item = SHOP_ITEMS[key];
             room.sendAnnouncement(`🔸 !sklep ${key} - ${item.name} (Cena: ${item.cost})`, player.id, infoColor, 'small', HaxNotification.CHAT);
@@ -7607,7 +7608,7 @@ function shopCommand(player, message) {
         return;
     }
 
-if (item.type === 'color') {
+    if (item.type === 'color') {
         if (removeCoins(player, item.cost)) {
             var auth = getAuthIdByPlayer(player);
             var now = Date.now();
@@ -7657,11 +7658,10 @@ if (item.type === 'color') {
                  muteObj.setDuration(5);
                  room.sendAnnouncement(`🙊 ${target.name} został uciszony za monety przez ${player.name}!`, null, 0xFFFF00, 'bold', HaxNotification.CHAT);
             }
-        } else {
+       } else {
             room.sendAnnouncement(`Za mało monet!`, player.id, errorColor, 'bold', HaxNotification.CHAT);
         }
-    }
-    else if (item.type === 'action_shout') {
+    } else if (item.type === 'action_shout') {
          var text = msgArray.slice(2).join(' ');
          if (text.length < 2) return;
          if (removeCoins(player, item.cost)) {
@@ -7875,9 +7875,7 @@ function adminRemoveColorCommand(player, message) {
     } else {
         room.sendAnnouncement(`❌ Nie znaleziono gracza/autha.`, player.id, errorColor, 'bold', HaxNotification.CHAT);
     }
-    /* --- NOWE GRY LOSOWE --- */
-/* --- NOWE GRY LOSOWE (z limitem min. 100) --- */
-
+}
 /* --- NOWE GRY LOSOWE (z limitem min. 100) --- */
 
 const MIN_BET = 100; // Minimalna stawka
@@ -8020,9 +8018,3 @@ function slotsCommand(player, message) {
         room.sendAnnouncement(`❌ Spróbuj szczęścia ponownie...`, player.id, infoColor, 'small', HaxNotification.CHAT);
     }
 }
-}
-
-
-
-
-
