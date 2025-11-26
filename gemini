@@ -1014,7 +1014,18 @@ var help = {
 dla przykładu: \'!help bb\' pomoże Ci zrozumieć komendę \'bb\' .`,
         function: helpCommand,
     },
-
+kolory: {
+        aliases: ['mycolors', 'inventory', 'ekwipunek'],
+        roles: Role.PLAYER,
+        desc: 'Lista Twoich kolorów i ich ważność.',
+        function: myColorsCommand
+    },
+    wybierz: {
+        aliases: ['equip', 'use', 'zaloz'],
+        roles: Role.PLAYER,
+        desc: 'Wybierz aktywny kolor. !wybierz <numer>',
+        function: equipColorCommand
+    },
     slogin: {
         aliases: ['l'],
         roles: Role.PLAYER,
@@ -2579,10 +2590,10 @@ function masterCommand(player, message) {
 function manualEloCommand(player, message) {
     var msgArray = message.split(/ +/);
     var cmd = msgArray[0].toLowerCase();
-    var isAdd = (cmd === "!addelo"); // Sprawdzamy czy dodajemy czy odejmujemy
+    var isAdd = (cmd === "!addelo");
     
     if (msgArray.length < 3) {
-        room.sendAnnouncement(`Użycie: ${cmd} #ID (dla gracza online) lub @Auth (dla offline) <ilość>`, player.id, errorColor, 'bold', HaxNotification.CHAT);
+        room.sendAnnouncement(`Użycie: ${cmd} #ID/@Auth <ilość>`, player.id, errorColor, 'bold', HaxNotification.CHAT);
         return;
     }
 
@@ -2590,63 +2601,77 @@ function manualEloCommand(player, message) {
     var amount = parseInt(msgArray[2]);
 
     if (isNaN(amount) || amount < 0) {
-        room.sendAnnouncement(`Podaj poprawną (dodatnią) liczbę punktów.`, player.id, errorColor, 'bold', HaxNotification.CHAT);
+        room.sendAnnouncement(`Podaj poprawną liczbę punktów.`, player.id, errorColor, 'bold', HaxNotification.CHAT);
         return;
     }
 
     var targetAuth = null;
     var targetName = "Gracz";
+    var targetPlayerObj = null;
 
-    // 1. Próba znalezienia po ID (#1, #2...)
+    // 1. Szukanie po ID
     if (targetInput.startsWith("#")) {
         var id = parseInt(targetInput.substring(1));
         var p = room.getPlayer(id);
         if (p) {
-            // Używamy globalnej funkcji helpera z Twojego skryptu
             targetAuth = (typeof getAuthIdByPlayer === "function") ? getAuthIdByPlayer(p) : p.auth;
             targetName = p.name;
+            targetPlayerObj = p;
         } else {
-            room.sendAnnouncement(`Nie ma gracza o ID ${id} na pokoju.`, player.id, errorColor, 'bold', HaxNotification.CHAT);
+            room.sendAnnouncement(`Nie ma gracza o ID ${id}.`, player.id, errorColor, 'bold', HaxNotification.CHAT);
             return;
         }
     } 
-    // 2. Próba użycia Autha bezpośrednio (@...)
+    // 2. Szukanie po Auth
     else if (targetInput.startsWith("@")) {
         targetAuth = targetInput.substring(1);
-        // Próba odnalezienia nazwy w bazie (jeśli istnieje)
         if (globalThis.eloStore && globalThis.eloStore.names && globalThis.eloStore.names[targetAuth]) {
             targetName = globalThis.eloStore.names[targetAuth];
         } else {
             targetName = targetAuth.substring(0, 10) + "...";
         }
     } else {
-        // Zakładamy, że podano sam Auth bez @
         targetAuth = targetInput;
     }
 
-    // Dostęp do bazy danych ELO
     var store = globalThis.eloStore;
     if (!store || !store.ratings) {
-        room.sendAnnouncement(`Błąd: Baza ELO nie jest dostępna.`, player.id, errorColor, 'bold', HaxNotification.CHAT);
+        room.sendAnnouncement(`Błąd: Baza ELO niedostępna.`, player.id, errorColor, 'bold', HaxNotification.CHAT);
         return;
     }
 
-    // Upewniamy się, że gracz ma wpis w bazie
     if (typeof ensureProfile === "function") ensureProfile(targetAuth, targetName);
     
-    // Modyfikacja punktów
     var current = Number(store.ratings[targetAuth]);
-    if (isNaN(current)) current = 1000; // Domyślne ELO (baseElo)
+    if (isNaN(current)) current = 1000;
 
     var change = isAdd ? amount : -amount;
     var newElo = current + change;
-    
-    // Zabezpieczenie przed ujemnym ELO (opcjonalne)
     if (newElo < 0) newElo = 0;
 
+    // --- SPRAWDZANIE BANA PRZY RĘCZNEJ ZMIANIE ---
+    if (newElo < 800) {
+        newElo = 1000; // Reset
+        store.ratings[targetAuth] = newElo;
+        localStorage.setItem("__eloStore", JSON.stringify(store));
+
+        room.sendAnnouncement(`📉 ${targetName} spadł poniżej 800 ELO (po edycji admina)! Ban 48h + Reset.`, null, errorColor, 'bold', HaxNotification.CHAT);
+
+        if (typeof getBanDurationInfo === 'function' && typeof registerTimedBan === 'function') {
+            const durInfo = getBanDurationInfo('48h');
+            registerTimedBan(targetPlayerObj, player, durInfo, "Spadek poniżej 800 pkt (Admin)", {
+                targetAuth: targetAuth,
+                targetName: targetName
+            });
+        }
+        if (targetPlayerObj) {
+            room.kickPlayer(targetPlayerObj.id, "Spadłeś poniżej 800 ELO. Ban 48h.", false);
+        }
+        return; // Kończymy funkcję, bo gracz zbanowany
+    }
+    // ---------------------------------------------
+
     store.ratings[targetAuth] = newElo;
-    
-    // Ręczny zapis do localStorage (bo funkcja saveEloStore jest prywatna w module)
     localStorage.setItem("__eloStore", JSON.stringify(store));
 
     var action = isAdd ? "Dodano" : "Odjęto";
@@ -6703,21 +6728,61 @@ const notify = (authId) => {
   const prev  = Number(oldElo[authId] ?? ELO_R0);
   const now   = Number(elo.ratings[authId] ?? prev);
   const delta = now - prev;
-      const sign  = delta > 0 ? '+' : '';
-      const label = outcomeLabelForAuth(authId);
-      const formattedDelta = delta >= 0 ? `+${delta.toFixed(1)}` : delta.toFixed(1);
-      const msgParts = [label];
-      if (scoreText) {
-        msgParts.push(scoreText.trim());
-      }
-      msgParts.push(`Nowe ELO: ${now.toFixed(1)} (${formattedDelta})`);
-      const msg = msgParts.join(' | ');
+  const sign  = delta > 0 ? '+' : '';
+  const label = outcomeLabelForAuth(authId);
+  const formattedDelta = delta >= 0 ? `+${delta.toFixed(1)}` : delta.toFixed(1);
+  const msgParts = [label];
+  if (scoreText) {
+    msgParts.push(scoreText.trim());
+  }
+  msgParts.push(`Nowe ELO: ${now.toFixed(1)} (${formattedDelta})`);
+  const msg = msgParts.join(' | ');
   const col = rankColor(classLabel(now));
   const pid = findPlayerIdByAuth(authId);
 
+  // 1. Wyświetlenie info o zmianie ELO
   if (pid != null){
     try { room.sendAnnouncement(msg, pid, col, 'small', HaxNotification.CHAT); }
     catch { room.sendAnnouncement(msg, pid); }
+  }
+
+  // 2. OSTRZEŻENIE (800 - 849 ELO)
+  if (now >= 800 && now < 850 && pid != null) {
+      setTimeout(() => {
+          room.sendAnnouncement(`⚠️ OSTRZEŻENIE! Twoje ELO (${now.toFixed(0)}) jest w strefie zagrożenia (Gówienko).`, pid, warningColor, 'bold', HaxNotification.CHAT);
+          room.sendAnnouncement(`Spadek poniżej 800 ELO = BAN 48h + Reset!`, pid, errorColor, 'bold', HaxNotification.MENTION);
+      }, 1500);
+  }
+
+  // 3. BAN ZA ELO (< 800)
+  if (now < 800) {
+      // Reset ELO do 1000
+      elo.ratings[authId] = 1000;
+      saveEloStore();
+
+      // Szukamy gracza (online lub nazwa z bazy)
+      const targetPlayer = pid ? room.getPlayer(pid) : null;
+      const targetName = targetPlayer ? targetPlayer.name : (elo.names[authId] || "Gracz");
+
+      // Ogłoszenie dla wszystkich
+      room.sendAnnouncement(`📉 ${targetName} spadł poniżej 800 ELO! Kara: Ban na 48h i reset rankingu.`, null, errorColor, 'bold', HaxNotification.CHAT);
+
+      // Nałożenie Bana (korzystamy z funkcji globalnych)
+      if (typeof getBanDurationInfo === 'function' && typeof registerTimedBan === 'function') {
+          const durInfo = getBanDurationInfo('48h');
+          if (durInfo) {
+              // "System ELO" jako admin banujący
+              registerTimedBan(targetPlayer, {name: "📉 System ELO"}, durInfo, "Spadek poniżej 800 pkt", {
+                  targetAuth: authId,
+                  targetName: targetName
+              });
+          }
+      }
+
+      // Wyrzucenie z pokoju (jeśli online)
+      if (targetPlayer) {
+          room.kickPlayer(targetPlayer.id, "Spadłeś poniżej 800 ELO. Wracaj za 2 dni z czystą kartą!", false);
+      }
   }
 };
 
@@ -7358,9 +7423,11 @@ const COIN_RATES = {
 };
 
 // Baza danych
+// Baza danych
 var coinStore = {
     balances: {}, 
-    colors: {},   
+    ownedColors: {}, // auth: [ { id: 'zloty', value: 0xFF..., expires: timestamp, name: '...' } ]
+    activeColor: {}, // auth: value (int) - aktualnie wybrany
     inventory: {} 
 };
 
@@ -7371,7 +7438,17 @@ function loadCoinStore() {
         if (raw) {
             var data = JSON.parse(raw);
             if (data.balances) coinStore.balances = data.balances;
-            if (data.colors) coinStore.colors = data.colors;
+            
+            // Migracja starego systemu (pojedynczy kolor) na nowy (lista)
+            if (data.colors && !data.ownedColors) {
+                coinStore.ownedColors = {};
+                coinStore.activeColor = {};
+                // Jeśli ktoś miał stary kolor, spróbujmy go przenieść (opcjonalne)
+            } else {
+                if (data.ownedColors) coinStore.ownedColors = data.ownedColors;
+                if (data.activeColor) coinStore.activeColor = data.activeColor;
+            }
+            
             if (data.inventory) coinStore.inventory = data.inventory;
         }
     } catch (e) {}
@@ -7379,7 +7456,25 @@ function loadCoinStore() {
 loadCoinStore();
 
 function saveCoinStore() {
+    // Przed zapisem czyścimy wygasłe kolory, żeby nie śmiecić w bazie
+    cleanExpiredColors(); 
     localStorage.setItem(COIN_STORAGE_KEY, JSON.stringify(coinStore));
+}
+
+// Funkcja czyszcząca wygasłe kolory
+function cleanExpiredColors() {
+    var now = Date.now();
+    for (var auth in coinStore.ownedColors) {
+        if (coinStore.ownedColors[auth]) {
+            coinStore.ownedColors[auth] = coinStore.ownedColors[auth].filter(c => c.expires > now);
+            
+            // Jeśli aktywny kolor wygasł, usuń go z aktywnych
+            if (coinStore.activeColor[auth]) {
+                var stillHasIt = coinStore.ownedColors[auth].find(c => c.value === coinStore.activeColor[auth]);
+                if (!stillHasIt) delete coinStore.activeColor[auth];
+            }
+        }
+    }
 }
 
 function getCoins(player) {
@@ -7491,14 +7586,38 @@ function shopCommand(player, message) {
         return;
     }
 
-    if (item.type === 'color') {
+if (item.type === 'color') {
         if (removeCoins(player, item.cost)) {
             var auth = getAuthIdByPlayer(player);
-            var expireDate = Date.now() + (7 * 24 * 60 * 60 * 1000); // 7 dni
-            
-            coinStore.colors[auth] = { value: item.value, expires: expireDate };
+            var now = Date.now();
+            var durationMs = 7 * 24 * 60 * 60 * 1000; // 7 dni
+
+            if (!coinStore.ownedColors[auth]) coinStore.ownedColors[auth] = [];
+
+            // Sprawdzamy czy gracz już ma ten kolor
+            var existingItem = coinStore.ownedColors[auth].find(c => c.id === itemKey);
+
+            if (existingItem) {
+                // Jeśli ma i jest ważny -> przedłużamy. Jeśli wygasł -> ustawiamy nową datę od teraz.
+                if (existingItem.expires > now) {
+                    existingItem.expires += durationMs;
+                } else {
+                    existingItem.expires = now + durationMs;
+                }
+                room.sendAnnouncement(`🛒 Przedłużono ważność koloru ${item.name} o 7 dni!`, player.id, successColor, 'bold', HaxNotification.CHAT);
+            } else {
+                // Nowy kolor
+                coinStore.ownedColors[auth].push({
+                    id: itemKey,
+                    name: item.name,
+                    value: item.value,
+                    expires: now + durationMs
+                });
+                // Automatycznie wybierz nowo kupiony kolor
+                coinStore.activeColor[auth] = item.value;
+                room.sendAnnouncement(`🛒 Kupiono ${item.name}! Został automatycznie wybrany.`, player.id, successColor, 'bold', HaxNotification.CHAT);
+            }
             saveCoinStore();
-            room.sendAnnouncement(`🛒 Kupiono ${item.name}! Kolor aktywny przez tydzień.`, player.id, successColor, 'bold', HaxNotification.CHAT);
         } else {
             room.sendAnnouncement(`Brakuje Ci ${item.cost - getCoins(player)} monet!`, player.id, errorColor, 'bold', HaxNotification.CHAT);
         }
@@ -7531,7 +7650,58 @@ function shopCommand(player, message) {
          }
     }
 }
+/* --- ZARZĄDZANIE KOLORAMI --- */
 
+function myColorsCommand(player, message) {
+    var auth = getAuthIdByPlayer(player);
+    var list = coinStore.ownedColors[auth] || [];
+    var now = Date.now();
+
+    // Filtrujemy wygasłe (tylko do wyświetlania, cleanExpiredColors zrobi resztę przy zapisie)
+    list = list.filter(c => c.expires > now);
+
+    if (list.length === 0) {
+        room.sendAnnouncement(`🎨 Nie posiadasz żadnych kolorów. Kup coś w !sklep!`, player.id, infoColor, 'bold', HaxNotification.CHAT);
+        return;
+    }
+
+    room.sendAnnouncement(`🎨 Twoje kolory (wpisz "!wybierz <numer>", aby ustawić):`, player.id, announcementColor, 'bold', HaxNotification.CHAT);
+    
+    var activeVal = coinStore.activeColor[auth];
+
+    for (var i = 0; i < list.length; i++) {
+        var c = list[i];
+        var daysLeft = ((c.expires - now) / (24 * 60 * 60 * 1000)).toFixed(1);
+        var status = (activeVal === c.value) ? " [AKTYWNY] ✅" : "";
+        
+        room.sendAnnouncement(`${i + 1}. ${c.name} (pozostało: ${daysLeft} dni)${status}`, player.id, c.value, 'bold', HaxNotification.CHAT);
+    }
+}
+
+function equipColorCommand(player, message) {
+    var msgArray = message.split(/ +/);
+    if (msgArray.length < 2) {
+        room.sendAnnouncement(`Użycie: !wybierz <numer z listy !kolory>`, player.id, errorColor, 'bold', HaxNotification.CHAT);
+        return;
+    }
+
+    var index = parseInt(msgArray[1]) - 1;
+    var auth = getAuthIdByPlayer(player);
+    var list = coinStore.ownedColors[auth] || [];
+    var now = Date.now();
+
+    // Upewniamy się, że lista jest aktualna
+    list = list.filter(c => c.expires > now);
+
+    if (index >= 0 && index < list.length) {
+        var selected = list[index];
+        coinStore.activeColor[auth] = selected.value;
+        saveCoinStore();
+        room.sendAnnouncement(`🎨 Ustawiłeś kolor: ${selected.name}! Napisz coś na czacie.`, player.id, selected.value, 'bold', HaxNotification.CHAT);
+    } else {
+        room.sendAnnouncement(`❌ Nieprawidłowy numer koloru. Sprawdź "!kolory".`, player.id, errorColor, 'bold', HaxNotification.CHAT);
+    }
+}
 // --- KOMENDY ADMINA (MONETY I KOLORY) ---
 
 function adminCoinCommand(player, message) {
@@ -7595,10 +7765,12 @@ function adminSetColorCommand(player, message) {
     var days = parseInt(msgArray[3]);
 
     var targetAuth = null;
+    var targetName = "Gracz";
+
     if (targetInput.startsWith("#")) {
         var id = parseInt(targetInput.replace('#', ''));
         var p = room.getPlayer(id);
-        if (p) targetAuth = getAuthIdByPlayer(p);
+        if (p) { targetAuth = getAuthIdByPlayer(p); targetName = p.name; }
     } else {
         targetAuth = targetInput.replace('@', '');
     }
@@ -7606,18 +7778,51 @@ function adminSetColorCommand(player, message) {
     if (!targetAuth) return;
 
     var colorValue = 0;
-    if (SHOP_ITEMS[colorInput.toLowerCase()]) colorValue = SHOP_ITEMS[colorInput.toLowerCase()].value;
+    var colorName = "Unikalny Kolor";
+    var colorId = "custom_" + Date.now();
+
+    // Czy to kolor ze sklepu?
+    if (SHOP_ITEMS[colorInput.toLowerCase()]) {
+        var shopItem = SHOP_ITEMS[colorInput.toLowerCase()];
+        colorValue = shopItem.value;
+        colorName = shopItem.name;
+        colorId = colorInput.toLowerCase();
+    } 
     else {
         var cleanHex = colorInput.replace('#', '');
-        if (/^[0-9A-Fa-f]{6}$/.test(cleanHex)) colorValue = parseInt(cleanHex, 16);
-        else { room.sendAnnouncement(`Zły kolor.`, player.id, errorColor, 'bold', HaxNotification.CHAT); return; }
+        if (/^[0-9A-Fa-f]{6}$/.test(cleanHex)) {
+            colorValue = parseInt(cleanHex, 16);
+            colorName = "Specjalny Kolor Admina";
+        } else { 
+            room.sendAnnouncement(`Zły kolor.`, player.id, errorColor, 'bold', HaxNotification.CHAT); return; 
+        }
     }
 
-    var expireDate = Date.now() + (days * 24 * 60 * 60 * 1000);
-    coinStore.colors[targetAuth] = { value: colorValue, expires: expireDate };
+    if (!coinStore.ownedColors[targetAuth]) coinStore.ownedColors[targetAuth] = [];
+    
+    var now = Date.now();
+    var durationMs = days * 24 * 60 * 60 * 1000;
+    
+    // Sprawdź czy ma już ten kolor
+    var existing = coinStore.ownedColors[targetAuth].find(c => c.value === colorValue);
+    
+    if (existing) {
+        if (existing.expires > now) existing.expires += durationMs;
+        else existing.expires = now + durationMs;
+    } else {
+        coinStore.ownedColors[targetAuth].push({
+            id: colorId,
+            name: colorName,
+            value: colorValue,
+            expires: now + durationMs
+        });
+    }
+    
+    // Ustaw jako aktywny
+    coinStore.activeColor[targetAuth] = colorValue;
     saveCoinStore();
 
-    room.sendAnnouncement(`🎨 Nadano kolor na ${days} dni!`, player.id, successColor, 'bold', HaxNotification.CHAT);
+    room.sendAnnouncement(`🎨 Nadano kolor dla ${targetName} na ${days} dni!`, player.id, successColor, 'bold', HaxNotification.CHAT);
 }
 
 function adminRemoveColorCommand(player, message) {
