@@ -1317,6 +1317,54 @@ addelo: {
         desc: `Resetuje ranking ELO wszystkim graczom (Nowy Sezon).`,
         function: resetSeasonCommand,
     },
+    kasa: {
+        aliases: ['money', 'balance', 'portfel'],
+        roles: Role.PLAYER,
+        desc: 'Stan konta.',
+        function: balanceCommand
+    },
+    przelew: {
+        aliases: ['pay'],
+        roles: Role.PLAYER,
+        desc: 'Wyślij kasę. !przelew #ID kwota',
+        function: transferCommand
+    },
+    ruletka: {
+        aliases: ['roulette'],
+        roles: Role.PLAYER,
+        desc: 'Hazard 50/50. !ruletka <kwota>',
+        function: rouletteCommand
+    },
+    sklep: {
+        aliases: ['shop', 'buy'],
+        roles: Role.PLAYER,
+        desc: 'Kupowanie kolorów i bonusów. !sklep',
+        function: shopCommand
+    },
+    addcoins: {
+        aliases: ['givecoins'],
+        roles: Role.PLAYER,
+        desc: 'Admin: Dodaj monety.',
+        function: adminCoinCommand
+    },
+    removecoins: {
+        aliases: ['takecoins'],
+        roles: Role.PLAYER,
+        desc: 'Admin: Zabierz monety.',
+        function: adminCoinCommand
+    },
+    setcolor: {
+        aliases: ['nadajkolor'],
+        roles: Role.MASTER,
+        desc: 'Master: Nadaj kolor.',
+        function: adminSetColorCommand
+    },
+    removecolor: {
+        aliases: ['usunkolor'],
+        roles: Role.MASTER,
+        desc: 'Master: Usuń kolor.',
+        function: adminRemoveColorCommand
+    },
     stats: { aliases: ['me', 'stat', 'mystats', 'staty'], roles: Role.PLAYER, desc: `Twoje statystyki (łącznie z ELO).`, function: unifiedStatsCommand },
 };
 
@@ -5050,29 +5098,53 @@ function updatePlayerStats(player, teamStats) {
     var stats = new HaxStatistics(player.name);
     var pComp = getPlayerComp(player);
     var storageKey = authArray[player.id][0];
+    
     if (storageKey && localStorage.getItem(storageKey)) {
         try {
             var parsed = JSON.parse(localStorage.getItem(storageKey));
-            if (parsed && typeof parsed === 'object') {
-                Object.assign(stats, parsed);
-    }
+            if (parsed && typeof parsed === 'object') Object.assign(stats, parsed);
         } catch (_) {}
     }
+
     stats.games = Number(stats.games) || 0;
     stats.wins = Number(stats.wins) || 0;
     stats.losses = Number(stats.losses) || 0;
     stats.games++;
+    
+    // --- SYSTEM MONET ---
+    var earnedCoins = 0;
+    
     if (lastWinner == teamStats) {
         stats.wins++;
+        earnedCoins += COIN_RATES.WIN;
     } else if (lastWinner !== Team.SPECTATORS) {
         stats.losses++;
+        earnedCoins += COIN_RATES.LOSS;
     }
+    
+    var g = getGoalsPlayer(pComp);
+    var a = getAssistsPlayer(pComp);
+    var cs = getCSPlayer(pComp);
+    var minutes = getGametimePlayer(pComp) / 60;
+
     stats.winrate = ((100 * stats.wins) / (stats.games || 1)).toFixed(1) + `%`;
-    stats.goals += getGoalsPlayer(pComp);
-    stats.assists += getAssistsPlayer(pComp);
+    stats.goals += g;
+    stats.assists += a;
     stats.ownGoals += getOwnGoalsPlayer(pComp);
-    stats.CS += getCSPlayer(pComp);
+    stats.CS += cs;
     stats.playtime += getGametimePlayer(pComp);
+    
+    // Bonusy
+    earnedCoins += (g * COIN_RATES.GOAL);
+    earnedCoins += (a * COIN_RATES.ASSIST);
+    earnedCoins += (cs * COIN_RATES.CS);
+    earnedCoins += Math.floor(minutes * COIN_RATES.PLAYTIME_PER_MIN);
+
+    if (earnedCoins > 0) {
+        addCoins(player, earnedCoins);
+    }
+    // --------------------
+
     localStorage.setItem(storageKey, JSON.stringify(stats));
 }
 
@@ -5824,8 +5896,30 @@ room.onPlayerChat = function (player, message) {
     }
     const prefixEmoji = getChatEmojiForPlayer(player);
     var chatLine = `${prefixEmoji ? prefixEmoji + ' ' : ''}${player.name}: ${message}`;
+// Domyślny kolor
     var chatColor = player.team == Team.RED ? redChatColor : player.team == Team.BLUE ? blueChatColor : defaultColor;
-    var recipients = [];
+
+    // --- KOLORY ZE SKLEPU ---
+    try {
+        var auth = getAuthIdByPlayer(player);
+        if (coinStore.colors && coinStore.colors[auth]) {
+            var entry = coinStore.colors[auth];
+            
+            if (entry.expires) {
+                if (Date.now() < entry.expires) {
+                    chatColor = entry.value;
+                } else {
+                    delete coinStore.colors[auth];
+                    saveCoinStore();
+                    room.sendAnnouncement(`❌ Twój kolor wygasł! Kup nowy w !sklep.`, player.id, infoColor, 'small', HaxNotification.CHAT);
+                }
+            } else {
+                // Obsługa starych wpisów bez daty (zabezpieczenie)
+                if (entry.value) chatColor = entry.value; 
+            }
+        }
+    } catch (e) {}
+    // ------------------------    var recipients = [];
     try {
         recipients = room.getPlayerList();
     } catch (_) {
@@ -7250,6 +7344,301 @@ function unifiedStatsCommand(player, message){
     try{ room.sendAnnouncement("Nie udało się wyświetlić statystyk.", player.id, errorColor, 'bold', HaxNotification.CHAT); }catch(_){}
   }
   return false;
+}
+/* ================= SYSTEM EKONOMII (MONETY + SKLEP CZASOWY) ================= */
+
+const COIN_STORAGE_KEY = "__coinStore_v2"; 
+const COIN_RATES = {
+    WIN: 30,
+    LOSS: 10,
+    GOAL: 10,
+    ASSIST: 5,
+    CS: 15, 
+    PLAYTIME_PER_MIN: 2
+};
+
+// Baza danych
+var coinStore = {
+    balances: {}, 
+    colors: {},   
+    inventory: {} 
+};
+
+// Ładowanie
+function loadCoinStore() {
+    try {
+        var raw = localStorage.getItem(COIN_STORAGE_KEY);
+        if (raw) {
+            var data = JSON.parse(raw);
+            if (data.balances) coinStore.balances = data.balances;
+            if (data.colors) coinStore.colors = data.colors;
+            if (data.inventory) coinStore.inventory = data.inventory;
+        }
+    } catch (e) {}
+}
+loadCoinStore();
+
+function saveCoinStore() {
+    localStorage.setItem(COIN_STORAGE_KEY, JSON.stringify(coinStore));
+}
+
+function getCoins(player) {
+    var auth = getAuthIdByPlayer(player);
+    return coinStore.balances[auth] || 0;
+}
+
+function addCoins(player, amount) {
+    var auth = getAuthIdByPlayer(player);
+    if (!coinStore.balances[auth]) coinStore.balances[auth] = 0;
+    coinStore.balances[auth] += Math.floor(amount);
+    saveCoinStore();
+}
+
+function removeCoins(player, amount) {
+    var auth = getAuthIdByPlayer(player);
+    if ((coinStore.balances[auth] || 0) < amount) return false;
+    coinStore.balances[auth] -= amount;
+    saveCoinStore();
+    return true;
+}
+
+// --- KOMENDY GRACZA ---
+
+function balanceCommand(player, message) {
+    var amount = getCoins(player);
+    room.sendAnnouncement(`💰 Stan konta: ${amount} monet.`, player.id, 0xFFD700, 'bold', HaxNotification.CHAT);
+}
+
+function transferCommand(player, message) {
+    var msgArray = message.split(/ +/);
+    if (msgArray.length < 3) {
+        room.sendAnnouncement(`💸 Przelew. Użycie: !przelew #ID <kwota>`, player.id, infoColor, 'bold', HaxNotification.CHAT);
+        return;
+    }
+    var targetId = parseInt(msgArray[1].replace('#', ''));
+    var amount = parseInt(msgArray[2]);
+    var target = room.getPlayer(targetId);
+    
+    if (!target || target.id == player.id || isNaN(amount) || amount <= 0) {
+        room.sendAnnouncement(`Błąd transakcji. Sprawdź ID i kwotę.`, player.id, errorColor, 'bold', HaxNotification.CHAT);
+        return;
+    }
+
+    if (removeCoins(player, amount)) {
+        addCoins(target, amount);
+        room.sendAnnouncement(`💸 Przelano ${amount} monet do ${target.name}.`, player.id, successColor, 'bold', HaxNotification.CHAT);
+        room.sendAnnouncement(`💸 Otrzymałeś ${amount} monet od ${player.name}.`, target.id, successColor, 'bold', HaxNotification.CHAT);
+    } else {
+        room.sendAnnouncement(`Brak wystarczających środków!`, player.id, errorColor, 'bold', HaxNotification.CHAT);
+    }
+}
+
+function rouletteCommand(player, message) {
+    var msgArray = message.split(/ +/);
+    if (msgArray.length < 2) {
+        room.sendAnnouncement(`🎰 Ruletka (50/50). Użycie: !ruletka <kwota>`, player.id, infoColor, 'bold', HaxNotification.CHAT);
+        return;
+    }
+    
+    var currentBalance = getCoins(player);
+    var amount = 0;
+    if (['all', 'max', 'wszystko'].includes(msgArray[1].toLowerCase())) amount = currentBalance;
+    else amount = parseInt(msgArray[1]);
+
+    if (isNaN(amount) || amount <= 0) return;
+    if (amount > currentBalance) {
+        room.sendAnnouncement(`Nie masz tyle monet!`, player.id, errorColor, 'bold', HaxNotification.CHAT);
+        return;
+    }
+
+    var win = Math.random() > 0.5;
+    if (win) {
+        addCoins(player, amount);
+        room.sendAnnouncement(`🎰 WYGRANA! +${amount} monet!`, player.id, 0x00FF00, 'bold', HaxNotification.CHAT);
+    } else {
+        removeCoins(player, amount);
+        room.sendAnnouncement(`🎰 Przegrałeś ${amount} monet...`, player.id, 0xFF0000, 'bold', HaxNotification.CHAT);
+    }
+}
+
+// --- SKLEP ---
+
+const SHOP_ITEMS = {
+    'zloty': { name: 'Kolor Złoty (7 dni)', cost: 10000, type: 'color', value: 0xFFD700 },
+    'neon': { name: 'Kolor Neonowy (7 dni)', cost: 6000, type: 'color', value: 0x00FF00 },
+    'roz': { name: 'Kolor Różowy (7 dni)', cost: 6000, type: 'color', value: 0xFF69B4 },
+    'czarny': { name: 'Kolor Czarny (7 dni)', cost: 20000, type: 'color', value: 0x000000 },
+    'ucisz': { name: 'Ucisz gracza (5 min)', cost: 1000, type: 'action_mute' },
+    'megafon': { name: 'Megafon (!shout)', cost: 400, type: 'action_shout' }
+};
+
+function shopCommand(player, message) {
+    var msgArray = message.split(/ +/);
+    if (msgArray.length < 2) {
+        room.sendAnnouncement(`🛒 SKLEP (Saldo: ${getCoins(player)})`, player.id, announcementColor, 'bold', HaxNotification.CHAT);
+        for (var key in SHOP_ITEMS) {
+            var item = SHOP_ITEMS[key];
+            room.sendAnnouncement(`🔸 !sklep ${key} - ${item.name} (Cena: ${item.cost})`, player.id, infoColor, 'small', HaxNotification.CHAT);
+        }
+        return;
+    }
+
+    var itemKey = msgArray[1].toLowerCase();
+    var item = SHOP_ITEMS[itemKey];
+
+    if (!item) {
+        room.sendAnnouncement(`Nieznany przedmiot.`, player.id, errorColor, 'bold', HaxNotification.CHAT);
+        return;
+    }
+
+    if (item.type === 'color') {
+        if (removeCoins(player, item.cost)) {
+            var auth = getAuthIdByPlayer(player);
+            var expireDate = Date.now() + (7 * 24 * 60 * 60 * 1000); // 7 dni
+            
+            coinStore.colors[auth] = { value: item.value, expires: expireDate };
+            saveCoinStore();
+            room.sendAnnouncement(`🛒 Kupiono ${item.name}! Kolor aktywny przez tydzień.`, player.id, successColor, 'bold', HaxNotification.CHAT);
+        } else {
+            room.sendAnnouncement(`Brakuje Ci ${item.cost - getCoins(player)} monet!`, player.id, errorColor, 'bold', HaxNotification.CHAT);
+        }
+    }
+    else if (item.type === 'action_mute') {
+        var targetId = parseInt(msgArray[2] ? msgArray[2].replace('#', '') : '0');
+        var target = room.getPlayer(targetId);
+        if (!target || target.admin || target.id == player.id) {
+            room.sendAnnouncement(`Błędny cel uciszenia.`, player.id, errorColor, 'bold', HaxNotification.CHAT);
+            return;
+        }
+        if (removeCoins(player, item.cost)) {
+            if (typeof MutePlayer !== 'undefined') {
+                 var muteAuth = getPlayerAuth(target);
+                 var muteObj = new MutePlayer(target.name, target.id, muteAuth);
+                 muteObj.setDuration(5);
+                 room.sendAnnouncement(`🙊 ${target.name} został uciszony za monety przez ${player.name}!`, null, 0xFFFF00, 'bold', HaxNotification.CHAT);
+            }
+        } else {
+            room.sendAnnouncement(`Za mało monet!`, player.id, errorColor, 'bold', HaxNotification.CHAT);
+        }
+    }
+    else if (item.type === 'action_shout') {
+         var text = msgArray.slice(2).join(' ');
+         if (text.length < 2) return;
+         if (removeCoins(player, item.cost)) {
+             room.sendAnnouncement(`📢 [MEGAFON] ${player.name}: ${text}`, null, 0xFF00FF, 'bold', HaxNotification.CHAT);
+         } else {
+            room.sendAnnouncement(`Za mało monet!`, player.id, errorColor, 'bold', HaxNotification.CHAT);
+         }
+    }
+}
+
+// --- KOMENDY ADMINA (MONETY I KOLORY) ---
+
+function adminCoinCommand(player, message) {
+    if (!debugMode && getRole(player) < Role.MASTER) return;
+
+    var msgArray = message.split(/ +/);
+    var cmd = msgArray[0].toLowerCase();
+    var isAdd = (cmd.includes('add') || cmd.includes('give'));
+
+    if (msgArray.length < 3) {
+        room.sendAnnouncement(`Użycie: ${cmd} #ID/@Auth <kwota>`, player.id, infoColor, 'bold', HaxNotification.CHAT);
+        return;
+    }
+
+    var targetInput = msgArray[1];
+    var amount = parseInt(msgArray[2]);
+    if (isNaN(amount)) return;
+
+    var targetAuth = null;
+    var targetName = "Gracz";
+
+    if (targetInput.startsWith("#")) {
+        var id = parseInt(targetInput.replace('#', ''));
+        var p = room.getPlayer(id);
+        if (p) { targetAuth = getAuthIdByPlayer(p); targetName = p.name; }
+    } else if (targetInput.startsWith("@") || targetInput.length > 5) {
+        targetAuth = targetInput.replace('@', '');
+        if (globalThis.eloStore && globalThis.eloStore.names[targetAuth]) targetName = globalThis.eloStore.names[targetAuth];
+        else targetName = "Offline";
+    }
+
+    if (!targetAuth) {
+        room.sendAnnouncement(`Nie znaleziono celu.`, player.id, errorColor, 'bold', HaxNotification.CHAT);
+        return;
+    }
+
+    if (!coinStore.balances[targetAuth]) coinStore.balances[targetAuth] = 0;
+
+    if (isAdd) {
+        coinStore.balances[targetAuth] += amount;
+        room.sendAnnouncement(`💰 Dodano ${amount} monet dla ${targetName}.`, player.id, successColor, 'bold', HaxNotification.CHAT);
+    } else {
+        if (coinStore.balances[targetAuth] < amount) coinStore.balances[targetAuth] = 0;
+        else coinStore.balances[targetAuth] -= amount;
+        room.sendAnnouncement(`💸 Zabrano ${amount} monet graczowi ${targetName}.`, player.id, warningColor, 'bold', HaxNotification.CHAT);
+    }
+    saveCoinStore();
+}
+
+function adminSetColorCommand(player, message) {
+    if (getRole(player) < Role.MASTER) return;
+
+    var msgArray = message.split(/ +/);
+    if (msgArray.length < 4) {
+        room.sendAnnouncement(`Użycie: !setcolor #ID <Hex/Nazwa> <Dni>`, player.id, infoColor, 'bold', HaxNotification.CHAT);
+        return;
+    }
+
+    var targetInput = msgArray[1];
+    var colorInput = msgArray[2];
+    var days = parseInt(msgArray[3]);
+
+    var targetAuth = null;
+    if (targetInput.startsWith("#")) {
+        var id = parseInt(targetInput.replace('#', ''));
+        var p = room.getPlayer(id);
+        if (p) targetAuth = getAuthIdByPlayer(p);
+    } else {
+        targetAuth = targetInput.replace('@', '');
+    }
+
+    if (!targetAuth) return;
+
+    var colorValue = 0;
+    if (SHOP_ITEMS[colorInput.toLowerCase()]) colorValue = SHOP_ITEMS[colorInput.toLowerCase()].value;
+    else {
+        var cleanHex = colorInput.replace('#', '');
+        if (/^[0-9A-Fa-f]{6}$/.test(cleanHex)) colorValue = parseInt(cleanHex, 16);
+        else { room.sendAnnouncement(`Zły kolor.`, player.id, errorColor, 'bold', HaxNotification.CHAT); return; }
+    }
+
+    var expireDate = Date.now() + (days * 24 * 60 * 60 * 1000);
+    coinStore.colors[targetAuth] = { value: colorValue, expires: expireDate };
+    saveCoinStore();
+
+    room.sendAnnouncement(`🎨 Nadano kolor na ${days} dni!`, player.id, successColor, 'bold', HaxNotification.CHAT);
+}
+
+function adminRemoveColorCommand(player, message) {
+    if (getRole(player) < Role.MASTER) return;
+    var msgArray = message.split(/ +/);
+    var targetInput = msgArray[1];
+    var targetAuth = null;
+
+    if (targetInput.startsWith("#")) {
+        var id = parseInt(targetInput.replace('#', ''));
+        var p = room.getPlayer(id);
+        if (p) targetAuth = getAuthIdByPlayer(p);
+    } else {
+        targetAuth = targetInput.replace('@', '');
+    }
+
+    if (targetAuth && coinStore.colors[targetAuth]) {
+        delete coinStore.colors[targetAuth];
+        saveCoinStore();
+        room.sendAnnouncement(`🗑️ Usunięto kolor.`, player.id, successColor, 'bold', HaxNotification.CHAT);
+    }
 }
 
 
