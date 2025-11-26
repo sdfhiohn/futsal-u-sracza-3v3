@@ -4814,29 +4814,43 @@ function balanceTeams() {
     tryAutoStartThreeVThree();
 }
 }
-
 function handlePlayersJoin() {
-    if (chooseMode) {
-        if (teamSize > 2 && players.length == 6) {
+    // 1. Zmiana mapy na BIG przy 6 graczach (Niezależnie od trybu wybierania)
+    if (teamSize > 2 && players.length == 6) {
+        // Sprawdzamy czy mapa już nie jest big, żeby nie spamować
+        if (currentStadium !== 'big') {
             setTimeout(() => {
                 stadiumCommand(emptyPlayer, `!big`);
             }, 5);
         }
+    }
+
+    // 2. Obsługa trybu wybierania (Choose Mode)
+    if (chooseMode) {
         getSpecList(teamRed.length <= teamBlue.length ? teamRed[0] : teamBlue[0]);
     }
+
+    // 3. Balansowanie składów
     balanceTeams();
 }
-
 function handlePlayersLeave() {
-    if (gameState != State.STOP) {
-        // Ragequit auto-detection disabled – no special handling on leave.
-    }
-    if (chooseMode) {
-        if (teamSize > 2 && players.length == 5) {
+    // 1. Zmiana mapy na CLASSIC przy spadku do 5 graczy (Niezależnie od trybu)
+    // Działa przy wyjściu z roomu ORAZ przy pójściu na !afk
+    if (teamSize > 2 && players.length == 5) {
+        if (currentStadium !== 'classic') {
             setTimeout(() => {
                 stadiumCommand(emptyPlayer, `!classic`);
             }, 5);
         }
+    }
+
+    if (gameState != State.STOP) {
+        // Ragequit auto-detection disabled
+    }
+
+    if (chooseMode) {
+        // (Usunięto stąd wewnętrzny warunek zmiany mapy, bo jest teraz na górze funkcji)
+        
         if (teamRed.length == 0 || teamBlue.length == 0) {
             room.setPlayerTeam(teamSpec[0].id, teamRed.length == 0 ? Team.RED : Team.BLUE);
             return;
