@@ -11,8 +11,7 @@ var gameWebhook = 'https://discord.com/api/webhooks/1417844778112122973/eTZ_4hNd
 var statusWebhook = "https://discord.com/api/webhooks/1443065498756583560/p40RgjDs5NMNT1SstJh-8OskVES5BN6jVFDMz51Z1P_nP0tkK0v3yHe930T2_sf0Gv2S"; 
 
 // Webhook do rankingu ELO (Ranking po meczu)
-var rankingWebhook = "hthttps://discord.com/api/webhooks/1443065290207268987/iuZBbuilIQZieQlFEYo3d7nxwHU4tfddZvs_g0GSZRWWy2r6e6WVo3jDkOod0MiF9CO6"; 
-// ---------------------
+var rankingWebhook = "https://discord.com/api/webhooks/1443065290207268987/iuZBbuilIQZieQlFEYo3d7nxwHU4tfddZvs_g0GSZRWWy2r6e6WVo3jDkOod0MiF9CO6";// ---------------------
 var fetchRecordingVariable = true;
 var timeLimit = 3;
 var scoreLimit = 3;
@@ -7432,13 +7431,13 @@ const COIN_RATES = {
     CS: 15, 
     PLAYTIME_PER_MIN: 2
 };
+const MIN_BET = 100; // Minimalna stawka do gier losowych
 
-// Baza danych
 // Baza danych
 var coinStore = {
     balances: {}, 
-    ownedColors: {}, // auth: [ { id: 'zloty', value: 0xFF..., expires: timestamp, name: '...' } ]
-    activeColor: {}, // auth: value (int) - aktualnie wybrany
+    ownedColors: {}, 
+    activeColor: {}, 
     inventory: {} 
 };
 
@@ -7454,7 +7453,6 @@ function loadCoinStore() {
             if (data.colors && !data.ownedColors) {
                 coinStore.ownedColors = {};
                 coinStore.activeColor = {};
-                // Jeśli ktoś miał stary kolor, spróbujmy go przenieść (opcjonalne)
             } else {
                 if (data.ownedColors) coinStore.ownedColors = data.ownedColors;
                 if (data.activeColor) coinStore.activeColor = data.activeColor;
@@ -7542,16 +7540,23 @@ function transferCommand(player, message) {
 function rouletteCommand(player, message) {
     var msgArray = message.split(/ +/);
     if (msgArray.length < 2) {
-        room.sendAnnouncement(`🎰 Ruletka (50/50). Użycie: !ruletka <kwota>`, player.id, infoColor, 'bold', HaxNotification.CHAT);
+        room.sendAnnouncement(`🎰 Ruletka (50/50). Użycie: !ruletka <kwota> (min. ${MIN_BET})`, player.id, infoColor, 'bold', HaxNotification.CHAT);
         return;
     }
     
     var currentBalance = getCoins(player);
     var amount = 0;
+
     if (['all', 'max', 'wszystko'].includes(msgArray[1].toLowerCase())) amount = currentBalance;
     else amount = parseInt(msgArray[1]);
 
     if (isNaN(amount) || amount <= 0) return;
+
+    if (amount < MIN_BET) {
+        room.sendAnnouncement(`❌ Minimalna stawka to ${MIN_BET} monet!`, player.id, errorColor, 'bold', HaxNotification.CHAT);
+        return;
+    }
+
     if (amount > currentBalance) {
         room.sendAnnouncement(`Nie masz tyle monet!`, player.id, errorColor, 'bold', HaxNotification.CHAT);
         return;
@@ -7564,6 +7569,144 @@ function rouletteCommand(player, message) {
     } else {
         removeCoins(player, amount);
         room.sendAnnouncement(`🎰 Przegrałeś ${amount} monet...`, player.id, 0xFF0000, 'bold', HaxNotification.CHAT);
+    }
+}
+
+function numberGameCommand(player, message) {
+    var msgArray = message.split(/ +/);
+    // Oczekujemy: !liczba <twoja_liczba> <stawka>
+    if (msgArray.length < 3) {
+        room.sendAnnouncement(`🎲 Zgadnij liczbę (1-10). Wygrana x10!`, player.id, infoColor, 'bold', HaxNotification.CHAT);
+        room.sendAnnouncement(`Użycie: !liczba <1-10> <stawka> (min. ${MIN_BET})`, player.id, infoColor, 'small', HaxNotification.CHAT);
+        return;
+    }
+
+    var pick = parseInt(msgArray[1]);
+    var amount = 0;
+    var balance = getCoins(player);
+
+    // Obsługa stawki (all/kwota)
+    if (['all', 'max', 'wszystko', 'vabanque'].includes(msgArray[2].toLowerCase())) {
+        amount = balance;
+    } else {
+        amount = parseInt(msgArray[2]);
+    }
+
+    // Walidacja
+    if (isNaN(pick) || pick < 1 || pick > 10) {
+        room.sendAnnouncement(`❌ Wybierz liczbę z zakresu 1-10.`, player.id, errorColor, 'bold', HaxNotification.CHAT);
+        return;
+    }
+    if (isNaN(amount) || amount <= 0) {
+        room.sendAnnouncement(`❌ Podaj poprawną stawkę.`, player.id, errorColor, 'bold', HaxNotification.CHAT);
+        return;
+    }
+    if (amount < MIN_BET) {
+        room.sendAnnouncement(`❌ Minimalna stawka to ${MIN_BET} monet!`, player.id, errorColor, 'bold', HaxNotification.CHAT);
+        return;
+    }
+    if (amount > balance) {
+        room.sendAnnouncement(`❌ Nie masz tyle siana! Masz: ${balance}`, player.id, errorColor, 'bold', HaxNotification.CHAT);
+        return;
+    }
+
+    // Pobranie kasy
+    removeCoins(player, amount);
+
+    // Losowanie
+    var draw = Math.floor(Math.random() * 10) + 1; // 1 do 10
+
+    // Efekt wizualny na czacie
+    if (draw === pick) {
+        var winAmount = amount * 10;
+        addCoins(player, winAmount);
+        room.sendAnnouncement(`🎲 [GRA 1-10] Obstawiono: ${pick} | Wylosowano: 🟢 ${draw} 🟢`, null, successColor, 'bold', HaxNotification.CHAT);
+        room.sendAnnouncement(`🎉 ${player.name} TRAFIA JACKPOTA! Wygrywa ${winAmount} monet!`, null, 0xFFD700, 'bold', HaxNotification.CHAT);
+    } else {
+        room.sendAnnouncement(`🎲 [GRA 1-10] Obstawiono: ${pick} | Wylosowano: 🔴 ${draw} 🔴`, player.id, errorColor, 'bold', HaxNotification.CHAT);
+        room.sendAnnouncement(`Niestety, tracisz ${amount} monet.`, player.id, infoColor, 'small', HaxNotification.CHAT);
+    }
+}
+
+const SLOT_SYMBOLS = ['🍒', '🍋', '🍇', '🍊', '💎', '7️⃣'];
+
+function slotsCommand(player, message) {
+    var msgArray = message.split(/ +/);
+    if (msgArray.length < 2) {
+        room.sendAnnouncement(`🎰 Jednoręki Bandyta. Użycie: !slots <stawka> (min. ${MIN_BET})`, player.id, infoColor, 'bold', HaxNotification.CHAT);
+        return;
+    }
+
+    var amount = 0;
+    var balance = getCoins(player);
+
+    if (['all', 'max', 'wszystko'].includes(msgArray[1].toLowerCase())) amount = balance;
+    else amount = parseInt(msgArray[1]);
+
+    if (isNaN(amount) || amount <= 0) return;
+
+    if (amount < MIN_BET) {
+        room.sendAnnouncement(`❌ Minimalna stawka to ${MIN_BET} monet!`, player.id, errorColor, 'bold', HaxNotification.CHAT);
+        return;
+    }
+
+    if (amount > balance) {
+        room.sendAnnouncement(`❌ Brak środków. Masz: ${balance}`, player.id, errorColor, 'bold', HaxNotification.CHAT);
+        return;
+    }
+
+    removeCoins(player, amount);
+
+    // Losowanie 3 bębnów
+    var r1 = SLOT_SYMBOLS[Math.floor(Math.random() * SLOT_SYMBOLS.length)];
+    var r2 = SLOT_SYMBOLS[Math.floor(Math.random() * SLOT_SYMBOLS.length)];
+    var r3 = SLOT_SYMBOLS[Math.floor(Math.random() * SLOT_SYMBOLS.length)];
+
+    // Budowanie wyglądu
+    var spinVisual = `🎰 | ${r1} | ${r2} | ${r3} | 🎰`;
+    
+    // Logika wygranych
+    var multiplier = 0;
+    var winMessage = "";
+
+    // 3 Siódemki (Jackpot)
+    if (r1 === '7️⃣' && r2 === '7️⃣' && r3 === '7️⃣') {
+        multiplier = 50;
+        winMessage = "JACKPOT!!! 50x!";
+    }
+    // 3 Diamenty
+    else if (r1 === '💎' && r2 === '💎' && r3 === '💎') {
+        multiplier = 30;
+        winMessage = "DIAMENTY! 30x!";
+    }
+    // 3 Takie same (inne)
+    else if (r1 === r2 && r2 === r3) {
+        multiplier = 10;
+        winMessage = "TRÓJKA! 10x!";
+    }
+    // 2 Takie same (para)
+    else if (r1 === r2 || r2 === r3 || r1 === r3) {
+        multiplier = 2;
+        winMessage = "Para! 2x";
+    }
+
+    // Wyświetlanie wyniku
+    if (multiplier > 0) {
+        var winAmount = amount * multiplier;
+        addCoins(player, winAmount);
+        // Kolorowy pasek dla wszystkich przy dużej wygranej
+        if (multiplier >= 10) {
+            room.sendAnnouncement(spinVisual, null, 0xFFD700, 'bold', HaxNotification.CHAT);
+            room.sendAnnouncement(`🎉 ${player.name} wygrywa ${winAmount} monet! (${winMessage})`, null, successColor, 'bold', HaxNotification.CHAT);
+        } else {
+            // Mniejsza wygrana tylko dla gracza
+            room.sendAnnouncement(spinVisual, player.id, 0xFFFF00, 'bold', HaxNotification.CHAT);
+            room.sendAnnouncement(`✅ Wygrałeś ${winAmount} monet! (${winMessage})`, player.id, successColor, 'small', HaxNotification.CHAT);
+        }
+    } else {
+        // Przegrana
+        room.sendAnnouncement(spinVisual, player.id, errorColor, 'bold', HaxNotification.CHAT);
+        room.sendAnnouncement(`❌ Spróbuj szczęścia ponownie...`, player.id, infoColor, 'small', HaxNotification.CHAT);
     }
 }
 
@@ -7674,77 +7817,6 @@ function shopCommand(player, message) {
     }
 }
 
-    var itemKey = msgArray[1].toLowerCase();
-    var item = SHOP_ITEMS[itemKey];
-
-    if (!item) {
-        room.sendAnnouncement(`Nieznany przedmiot.`, player.id, errorColor, 'bold', HaxNotification.CHAT);
-        return;
-    }
-
-    if (item.type === 'color') {
-        if (removeCoins(player, item.cost)) {
-            var auth = getAuthIdByPlayer(player);
-            var now = Date.now();
-            var durationMs = 7 * 24 * 60 * 60 * 1000; // 7 dni
-
-            if (!coinStore.ownedColors[auth]) coinStore.ownedColors[auth] = [];
-
-            // Sprawdzamy czy gracz już ma ten kolor
-            var existingItem = coinStore.ownedColors[auth].find(c => c.id === itemKey);
-
-            if (existingItem) {
-                // Jeśli ma i jest ważny -> przedłużamy. Jeśli wygasł -> ustawiamy nową datę od teraz.
-                if (existingItem.expires > now) {
-                    existingItem.expires += durationMs;
-                } else {
-                    existingItem.expires = now + durationMs;
-                }
-                room.sendAnnouncement(`🛒 Przedłużono ważność koloru ${item.name} o 7 dni!`, player.id, successColor, 'bold', HaxNotification.CHAT);
-            } else {
-                // Nowy kolor
-                coinStore.ownedColors[auth].push({
-                    id: itemKey,
-                    name: item.name,
-                    value: item.value,
-                    expires: now + durationMs
-                });
-                // Automatycznie wybierz nowo kupiony kolor
-                coinStore.activeColor[auth] = item.value;
-                room.sendAnnouncement(`🛒 Kupiono ${item.name}! Został automatycznie wybrany.`, player.id, successColor, 'bold', HaxNotification.CHAT);
-            }
-            saveCoinStore();
-        } else {
-            room.sendAnnouncement(`Brakuje Ci ${item.cost - getCoins(player)} monet!`, player.id, errorColor, 'bold', HaxNotification.CHAT);
-        }
-    }
-    else if (item.type === 'action_mute') {
-        var targetId = parseInt(msgArray[2] ? msgArray[2].replace('#', '') : '0');
-        var target = room.getPlayer(targetId);
-        if (!target || target.admin || target.id == player.id) {
-            room.sendAnnouncement(`Błędny cel uciszenia.`, player.id, errorColor, 'bold', HaxNotification.CHAT);
-            return;
-        }
-        if (removeCoins(player, item.cost)) {
-            if (typeof MutePlayer !== 'undefined') {
-                 var muteAuth = getPlayerAuth(target);
-                 var muteObj = new MutePlayer(target.name, target.id, muteAuth);
-                 muteObj.setDuration(5);
-                 room.sendAnnouncement(`🙊 ${target.name} został uciszony za monety przez ${player.name}!`, null, 0xFFFF00, 'bold', HaxNotification.CHAT);
-            }
-       } else {
-            room.sendAnnouncement(`Za mało monet!`, player.id, errorColor, 'bold', HaxNotification.CHAT);
-        }
-    } else if (item.type === 'action_shout') {
-         var text = msgArray.slice(2).join(' ');
-         if (text.length < 2) return;
-         if (removeCoins(player, item.cost)) {
-             room.sendAnnouncement(`📢 [MEGAFON] ${player.name}: ${text}`, null, 0xFF00FF, 'bold', HaxNotification.CHAT);
-         } else {
-            room.sendAnnouncement(`Za mało monet!`, player.id, errorColor, 'bold', HaxNotification.CHAT);
-         }
-    }
-
 /* --- ZARZĄDZANIE KOLORAMI --- */
 
 function myColorsCommand(player, message) {
@@ -7797,6 +7869,7 @@ function equipColorCommand(player, message) {
         room.sendAnnouncement(`❌ Nieprawidłowy numer koloru. Sprawdź "!kolory".`, player.id, errorColor, 'bold', HaxNotification.CHAT);
     }
 }
+
 // --- KOMENDY ADMINA (MONETY I KOLORY) ---
 
 function adminCoinCommand(player, message) {
@@ -7950,148 +8023,8 @@ function adminRemoveColorCommand(player, message) {
         room.sendAnnouncement(`❌ Nie znaleziono gracza/autha.`, player.id, errorColor, 'bold', HaxNotification.CHAT);
     }
 }
-/* --- NOWE GRY LOSOWE (z limitem min. 100) --- */
 
-const MIN_BET = 100; // Minimalna stawka
-
-function numberGameCommand(player, message) {
-    var msgArray = message.split(/ +/);
-    // Oczekujemy: !liczba <twoja_liczba> <stawka>
-    if (msgArray.length < 3) {
-        room.sendAnnouncement(`🎲 Zgadnij liczbę (1-10). Wygrana x10!`, player.id, infoColor, 'bold', HaxNotification.CHAT);
-        room.sendAnnouncement(`Użycie: !liczba <1-10> <stawka> (min. ${MIN_BET})`, player.id, infoColor, 'small', HaxNotification.CHAT);
-        return;
-    }
-
-    var pick = parseInt(msgArray[1]);
-    var amount = 0;
-    var balance = getCoins(player);
-
-    // Obsługa stawki (all/kwota)
-    if (['all', 'max', 'wszystko', 'vabanque'].includes(msgArray[2].toLowerCase())) {
-        amount = balance;
-    } else {
-        amount = parseInt(msgArray[2]);
-    }
-
-    // Walidacja
-    if (isNaN(pick) || pick < 1 || pick > 10) {
-        room.sendAnnouncement(`❌ Wybierz liczbę z zakresu 1-10.`, player.id, errorColor, 'bold', HaxNotification.CHAT);
-        return;
-    }
-    if (isNaN(amount) || amount <= 0) {
-        room.sendAnnouncement(`❌ Podaj poprawną stawkę.`, player.id, errorColor, 'bold', HaxNotification.CHAT);
-        return;
-    }
-    if (amount < MIN_BET) {
-        room.sendAnnouncement(`❌ Minimalna stawka to ${MIN_BET} monet!`, player.id, errorColor, 'bold', HaxNotification.CHAT);
-        return;
-    }
-    if (amount > balance) {
-        room.sendAnnouncement(`❌ Nie masz tyle siana! Masz: ${balance}`, player.id, errorColor, 'bold', HaxNotification.CHAT);
-        return;
-    }
-
-    // Pobranie kasy
-    removeCoins(player, amount);
-
-    // Losowanie
-    var draw = Math.floor(Math.random() * 10) + 1; // 1 do 10
-
-    // Efekt wizualny na czacie
-    if (draw === pick) {
-        var winAmount = amount * 10;
-        addCoins(player, winAmount);
-        room.sendAnnouncement(`🎲 [GRA 1-10] Obstawiono: ${pick} | Wylosowano: 🟢 ${draw} 🟢`, null, successColor, 'bold', HaxNotification.CHAT);
-        room.sendAnnouncement(`🎉 ${player.name} TRAFIA JACKPOTA! Wygrywa ${winAmount} monet!`, null, 0xFFD700, 'bold', HaxNotification.CHAT);
-    } else {
-        room.sendAnnouncement(`🎲 [GRA 1-10] Obstawiono: ${pick} | Wylosowano: 🔴 ${draw} 🔴`, player.id, errorColor, 'bold', HaxNotification.CHAT);
-        room.sendAnnouncement(`Niestety, tracisz ${amount} monet.`, player.id, infoColor, 'small', HaxNotification.CHAT);
-    }
-}
-
-const SLOT_SYMBOLS = ['🍒', '🍋', '🍇', '🍊', '💎', '7️⃣'];
-
-function slotsCommand(player, message) {
-    var msgArray = message.split(/ +/);
-    if (msgArray.length < 2) {
-        room.sendAnnouncement(`🎰 Jednoręki Bandyta. Użycie: !slots <stawka> (min. ${MIN_BET})`, player.id, infoColor, 'bold', HaxNotification.CHAT);
-        return;
-    }
-
-    var amount = 0;
-    var balance = getCoins(player);
-
-    if (['all', 'max', 'wszystko'].includes(msgArray[1].toLowerCase())) amount = balance;
-    else amount = parseInt(msgArray[1]);
-
-    if (isNaN(amount) || amount <= 0) return;
-    
-    // NOWY WARUNEK MINIMALNEJ KWOTY
-    if (amount < MIN_BET) {
-        room.sendAnnouncement(`❌ Minimalna stawka to ${MIN_BET} monet!`, player.id, errorColor, 'bold', HaxNotification.CHAT);
-        return;
-    }
-
-    if (amount > balance) {
-        room.sendAnnouncement(`❌ Brak środków. Masz: ${balance}`, player.id, errorColor, 'bold', HaxNotification.CHAT);
-        return;
-    }
-
-    removeCoins(player, amount);
-
-    // Losowanie 3 bębnów
-    var r1 = SLOT_SYMBOLS[Math.floor(Math.random() * SLOT_SYMBOLS.length)];
-    var r2 = SLOT_SYMBOLS[Math.floor(Math.random() * SLOT_SYMBOLS.length)];
-    var r3 = SLOT_SYMBOLS[Math.floor(Math.random() * SLOT_SYMBOLS.length)];
-
-    // Budowanie wyglądu
-    var spinVisual = `🎰 | ${r1} | ${r2} | ${r3} | 🎰`;
-    
-    // Logika wygranych
-    var multiplier = 0;
-    var winMessage = "";
-
-    // 3 Siódemki (Jackpot)
-    if (r1 === '7️⃣' && r2 === '7️⃣' && r3 === '7️⃣') {
-        multiplier = 50;
-        winMessage = "JACKPOT!!! 50x!";
-    }
-    // 3 Diamenty
-    else if (r1 === '💎' && r2 === '💎' && r3 === '💎') {
-        multiplier = 30;
-        winMessage = "DIAMENTY! 30x!";
-    }
-    // 3 Takie same (inne)
-    else if (r1 === r2 && r2 === r3) {
-        multiplier = 10;
-        winMessage = "TRÓJKA! 10x!";
-    }
-    // 2 Takie same (para)
-    else if (r1 === r2 || r2 === r3 || r1 === r3) {
-        multiplier = 2;
-        winMessage = "Para! 2x";
-    }
-
-    // Wyświetlanie wyniku
-    if (multiplier > 0) {
-        var winAmount = amount * multiplier;
-        addCoins(player, winAmount);
-        // Kolorowy pasek dla wszystkich przy dużej wygranej
-        if (multiplier >= 10) {
-            room.sendAnnouncement(spinVisual, null, 0xFFD700, 'bold', HaxNotification.CHAT);
-            room.sendAnnouncement(`🎉 ${player.name} wygrywa ${winAmount} monet! (${winMessage})`, null, successColor, 'bold', HaxNotification.CHAT);
-        } else {
-            // Mniejsza wygrana tylko dla gracza
-            room.sendAnnouncement(spinVisual, player.id, 0xFFFF00, 'bold', HaxNotification.CHAT);
-            room.sendAnnouncement(`✅ Wygrałeś ${winAmount} monet! (${winMessage})`, player.id, successColor, 'small', HaxNotification.CHAT);
-        }
-    } else {
-        // Przegrana
-        room.sendAnnouncement(spinVisual, player.id, errorColor, 'bold', HaxNotification.CHAT);
-        room.sendAnnouncement(`❌ Spróbuj szczęścia ponownie...`, player.id, infoColor, 'small', HaxNotification.CHAT);
-    }
-    /* ================= SYSTEM CYKLICZNYCH OGŁOSZEŃ ================= */
+/* ================= SYSTEM CYKLICZNYCH OGŁOSZEŃ ================= */
 
 const RECURRING_ANNOUNCEMENTS = [
     { type: 'QUOTE', text: "Szaleństwo: robić wciąż to samo i oczekiwać różnych rezultatów.", author: "A. Einstein", color: 0xAAAAFF },
@@ -8100,15 +8033,17 @@ const RECURRING_ANNOUNCEMENTS = [
     { type: 'QUOTE', text: "Nie martw się trudnościami w matematyce. Zapewniam cię, że moje są jeszcze większe.", author: "A. Einstein", color: 0xAAAAFF },
     { type: 'QUOTE', text: "Jedynym sposobem na to, by uniknąć demoralizującego skutku bycia chwalonym jest kontynuowanie pracy.", author: "A. Einstein", color: 0xAAAAFF },
     { type: 'QUOTE', text: "Nie można jednocześnie przygotowywać się do wojny i oczekiwać pokoju.", author: "A. Einstein", color: 0xAAAAFF },
-
 ];
 
-const ANNOUNCEMENT_INTERVAL_MS = 3 * 60 * 1000; // 5 minut
+// Zmieniono na 5 minut (300 000 ms), ale jeśli chcesz 3 minuty, zmień na 3 * 60 * 1000
+const ANNOUNCEMENT_INTERVAL_MS = 5 * 60 * 1000; 
 let currentQuoteIndex = 0;
 
 function sendRecurringAnnouncement() {
     // Nie wysyłamy, jeśli nie ma graczy
-    if (room.getPlayerList().length <= 0) return;
+    if (room.getPlayerList().length <= 0) {
+        return; // Zabezpieczony return w klamrach
+    }
 
     // Pobranie cytatu
     const quote = RECURRING_ANNOUNCEMENTS[currentQuoteIndex];
@@ -8119,14 +8054,14 @@ function sendRecurringAnnouncement() {
     room.sendAnnouncement("🏆 SEZON FUTSAL #1 ROZPOCZĘTY!", null, 0xFFD700, 'bold', HaxNotification.CHAT);
     
     // 2. Wiadomość z komendami (InfoColor)
-    const commandMsg = "ℹ️ NOWOŚCI: Sprawdź swój portfel (!kasa) | Kup kolory na 7 dni (!sklep) | Graj w ruletkę (!ruletka)!";
+    const commandMsg = "ℹ️ NOWOŚCI: Sprawdź swój portfel (!kasa) | Kup kolory na 7 dni (!sklep) | Graj w ruletkę (!ruletka, !liczba)!";
     room.sendAnnouncement(commandMsg, null, infoColor, 'small', HaxNotification.CHAT);
 
     // 3. Cytat (Fizyka/Filozofia)
     room.sendAnnouncement(quoteText, null, quote.color, 'small', HaxNotification.CHAT);
-    // 4. Wiadomość z komendami (InfoColor)
-    const commandMsg = "🔧 BUGFIX: Naprawiono reset meczów!";
-    room.sendAnnouncement(commandMsg, null, infoColor, 'small', HaxNotification.CHAT);
+
+    // 4. Informacja o stabilności (SuccessColor)
+    room.sendAnnouncement("🛠️ STABILIZACJA: Poprawiono ruch wskaźników presji, naprawiono ładowanie mapy 1v1 oraz usunięto błędy serwera. Trzymamy stabilność!", null, 0x75FF75, 'small', HaxNotification.CHAT);
 
     // 5. Stopka
     room.sendAnnouncement("---", null, infoColor, 'small', HaxNotification.CHAT);
@@ -8134,4 +8069,3 @@ function sendRecurringAnnouncement() {
 
 // Uruchomienie timera przy ładowaniu skryptu
 setInterval(sendRecurringAnnouncement, ANNOUNCEMENT_INTERVAL_MS);
-}
