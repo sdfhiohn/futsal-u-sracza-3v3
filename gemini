@@ -1,8 +1,8 @@
 /* ROOM */
 const roomName = '🏆⚽ |Futsal 3v3| Pod Sraczem | ⚽🏆';
 const maxPlayers = 18;
-const roomPublic = true;
-const token = "thr1.AAAAAGkmPLW9A4VNQs53SA.EtpFpTVdJfs"; // Insert token here
+const roomPublic = false;
+const token = "thr1.AAAAAGkoy2Upkdo8yRsAbw.ZaMF-CESrnE"; // Insert token here
 
 var roomWebhook = 'https://discord.com/api/webhooks/1417845044651626566/vZdV_vQDAU1n4dcwJnTWKUYYVQZExQrRd0HoC8gvXgQkIupqHfZplwt_ZtYRzVfsNxmT'; // Logi
 var gameWebhook = 'https://discord.com/api/webhooks/1417844778112122973/eTZ_4hNdpMXgzUR68Brw9bQbyzhhptNj3oh-2SS8BPjQLlFmX5UPbzQqV4DaJgcxWjDx'; //  raporty meczow
@@ -142,7 +142,7 @@ var drawTimeLimit = 1;
 var teamSize = 3;
 var maxAdmins = 0;
 var disableBans = false;
-var debugMode = false;
+var debugMode = true;
 var afkLimit = debugMode ? Infinity : 12;
 
 var defaultSlowMode = 0.5;
@@ -998,8 +998,9 @@ var masterList = [
     "DBEZhwUpxg8jglAm671LfH94dohHntBTMiCtHHaEsNo", //sracz
     "n3khbiT-Uiux98dA5cz8sKX-9-8Ao7E-s9EsC5OWXpc", //delta
     "I6JXKX_DfKIGl-Ri4JFgLyOJntIsOz6TgkzOQRYj2Io", //"Tajmoł 😈"
-    "6kyUssUkv9zdcLiDu5_yE5jq_scOEtANFO_nTSy-8gA", //ave
+    "s-G5mbL_MOH0B4P0-zv217QhDELfdWSd_plx3unO2VI", //ave
     "RMZkvZIED6AgBlbf8v8XfjVIm7jJrrSznsIOn2ni22E", //rapid
+    "1tr1VMh1396XNlLCZQcempxzDzquY10ss4v25rhyEXs", //sracz fon
 ];
 
 /* COMMANDS */
@@ -4845,7 +4846,6 @@ function handlePlayersJoin() {
 }
 function handlePlayersLeave() {
     // 1. Zmiana mapy na CLASSIC przy spadku do 5 graczy (Niezależnie od trybu)
-    // Działa przy wyjściu z roomu ORAZ przy pójściu na !afk
     if (teamSize > 2 && players.length == 5) {
         if (currentStadium !== 'classic') {
             setTimeout(() => {
@@ -4859,56 +4859,56 @@ function handlePlayersLeave() {
     }
 
     if (chooseMode) {
-        // (Usunięto stąd wewnętrzny warunek zmiany mapy, bo jest teraz na górze funkcji)
-        
+        // Jeśli nie ma kapitana (pusty skład), daj admina specowi
         if (teamRed.length == 0 || teamBlue.length == 0) {
-            room.setPlayerTeam(teamSpec[0].id, teamRed.length == 0 ? Team.RED : Team.BLUE);
-            return;
-        }
-        if (Math.abs(teamRed.length - teamBlue.length) == teamSpec.length) {
-            deactivateChooseMode();
-            resumeGame();
-            var b = teamSpec.length;
-            if (teamRed.length > teamBlue.length) {
-                for (var i = 0; i < b; i++) {
-                    clearTimeout(insertingTimeout);
-                    insertingPlayers = true;
-                    setTimeout(() => {
-                        room.setPlayerTeam(teamSpec[0].id, Team.BLUE);
-                    }, 5 * i);
-                }
-                insertingTimeout = setTimeout(() => {
-                    insertingPlayers = false;
-                }, 5 * b);
-            } else {
-                for (var i = 0; i < b; i++) {
-                    clearTimeout(insertingTimeout);
-                    insertingPlayers = true;
-                    setTimeout(() => {
-                        room.setPlayerTeam(teamSpec[0].id, Team.RED);
-                    }, 5 * i);
-                }
-                insertingTimeout = setTimeout(() => {
-                    insertingPlayers = false;
-                }, 5 * b);
+            if (teamSpec.length > 0) {
+                room.setPlayerTeam(teamSpec[0].id, teamRed.length == 0 ? Team.RED : Team.BLUE);
             }
-            return;
-        }
-        if (streak == 0 && gameState == State.STOP) {
-            if (Math.abs(teamRed.length - teamBlue.length) == 2) {
-                var teamIn = teamRed.length > teamBlue.length ? teamRed : teamBlue;
-                room.setPlayerTeam(teamIn[teamIn.length - 1].id, Team.SPECTATORS)
-            }
-        }
-        if (teamRed.length == teamBlue.length && teamSpec.length < 2) {
-            deactivateChooseMode();
-            resumeGame();
             return;
         }
 
+        // --- FIX 3v1: Jeśli różnica w składach jest równa liczbie widzów, to kończymy wybieranie
+        // ALE TYLKO JEŚLI DRUŻYNY BĘDĄ RÓWNE PO DODANIU WIDZÓW!
+        if (Math.abs(teamRed.length - teamBlue.length) == teamSpec.length) {
+            
+            // Sprawdzenie, czy po dodaniu widzów składy będą równe
+            let futureRed = teamRed.length + (teamRed.length < teamBlue.length ? teamSpec.length : 0);
+            let futureBlue = teamBlue.length + (teamBlue.length < teamRed.length ? teamSpec.length : 0);
+
+            if (futureRed === futureBlue) {
+                deactivateChooseMode();
+                resumeGame();
+                
+                // Automatyczne wrzucenie reszty graczy
+                var b = teamSpec.length;
+                if (teamRed.length > teamBlue.length) {
+                    for (var i = 0; i < b; i++) {
+                        clearTimeout(insertingTimeout);
+                        insertingPlayers = true;
+                        setTimeout(() => {
+                            if (teamSpec[0]) room.setPlayerTeam(teamSpec[0].id, Team.BLUE);
+                        }, 5 * i);
+                    }
+                    insertingTimeout = setTimeout(() => { insertingPlayers = false; }, 5 * b);
+                } else {
+                    for (var i = 0; i < b; i++) {
+                        clearTimeout(insertingTimeout);
+                        insertingPlayers = true;
+                        setTimeout(() => {
+                            if (teamSpec[0]) room.setPlayerTeam(teamSpec[0].id, Team.RED);
+                        }, 5 * i);
+                    }
+                    insertingTimeout = setTimeout(() => { insertingPlayers = false; }, 5 * b);
+                }
+                return;
+            }
+        }
+
+        // Jeśli kapitan uciekł
         if (capLeft) {
             choosePlayer();
         } else {
+            // Jeśli składy są nierówne, kontynuuj wybieranie
             getSpecList(teamRed.length <= teamBlue.length ? teamRed[0] : teamBlue[0]);
         }
     }
@@ -5172,9 +5172,13 @@ function getCSString(scores) {
 
 function getLastTouchOfTheBall() {
     const ballPosition = room.getBallPosition();
-    updateTeams();
+    
+    // ZMIANA: Zamiast ciężkiego updateTeams(), pobieramy listę lokalnie tylko do fizyki
+    // updateTeams(); <--- TO BYŁO WOLNE
+    const currentPlayers = room.getPlayerList(); // To jest szybkie
+    
     let playerArray = [];
-    for (let player of players) {
+    for (let player of currentPlayers) {
         if (player.position != null) {
             var distanceToBall = pointDistance(player.position, ballPosition);
             if (distanceToBall < triggerDistance) {
@@ -5183,8 +5187,11 @@ function getLastTouchOfTheBall() {
             }
         }
     }
+    
     if (playerArray.length != 0) {
         let playerTouch = playerArray.sort((a, b) => a[1] - b[1])[0][0];
+        
+        // Sprawdzamy czy to nie duch/afk (opcjonalne, ale bezpieczne)
         if (lastTeamTouched == playerTouch.team || lastTeamTouched == Team.SPECTATORS) {
             if (lastTouches[0] == null || (lastTouches[0] != null && lastTouches[0].player.id != playerTouch.id)) {
                 game.touchArray.push(
@@ -7613,10 +7620,11 @@ function loadCoinStore() {
 }
 loadCoinStore();
 
+var coinStoreDirty = false;
+
 function saveCoinStore() {
-    // Przed zapisem czyścimy wygasłe kolory, żeby nie śmiecić w bazie
-    cleanExpiredColors(); 
-    localStorage.setItem(COIN_STORAGE_KEY, JSON.stringify(coinStore));
+    // Zamiast zapisywać od razu (lagi), tylko zaznaczamy, że trzeba zapisać później
+    coinStoreDirty = true;
 }
 
 // Funkcja czyszcząca wygasłe kolory
