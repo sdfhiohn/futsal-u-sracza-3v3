@@ -2,7 +2,7 @@
 const roomName = '🏆⚽ |Futsal 3v3| Pod Sraczem | ⚽🏆';
 const maxPlayers = 18;
 const roomPublic = true;
-const token = "thr1.AAAAAGkoy2Upkdo8yRsAbw.ZaMF-CESrnE"; // Insert token here
+const token = "thr1.AAAAAGmbc80VYg_K-HrS9g.wJ5uAHC0OgA"; // Insert token here
 
 var roomWebhook = 'https://discord.com/api/webhooks/1417845044651626566/vZdV_vQDAU1n4dcwJnTWKUYYVQZExQrRd0HoC8gvXgQkIupqHfZplwt_ZtYRzVfsNxmT'; // Logi
 var gameWebhook = 'https://discord.com/api/webhooks/1417844778112122973/eTZ_4hNdpMXgzUR68Brw9bQbyzhhptNj3oh-2SS8BPjQLlFmX5UPbzQqV4DaJgcxWjDx'; //  raporty meczow
@@ -135,6 +135,17 @@ var SMSet = new Set();
 
 var hideClaimMessage = true;
 var mentionPlayersUnpause = true;
+var statsCache = {}; 
+function saveStatsToDisk() {
+    for (var auth in statsCache) {
+        if (statsCache.hasOwnProperty(auth)) {
+            localStorage.setItem(auth, JSON.stringify(statsCache[auth]));
+        }
+    }
+}
+
+// Zapisuj na dysk automatycznie co 60 sekund (zamiast przy każdym golu)
+setInterval(saveStatsToDisk, 60000);
 
 /* OBJECTS */
 
@@ -5390,59 +5401,42 @@ function getGoalString(team) {
 /* ROOM STATS FUNCTIONS */
 
 function updatePlayerStats(player, teamStats) {
-    var stats = new HaxStatistics(player.name);
+    // Zabezpieczenie: jeśli nie ma gracza w authArray, nic nie rób
+    if (!authArray[player.id]) return;
+
+    var auth = authArray[player.id][0]; 
+    
+    // 1. Jeśli nie mamy statystyk w RAM, spróbuj pobrać z dysku lub stwórz nowe
+    if (!statsCache[auth]) {
+        var fromDisk = localStorage.getItem(auth);
+        if (fromDisk) {
+            try {
+                statsCache[auth] = JSON.parse(fromDisk);
+            } catch (e) {
+                statsCache[auth] = new HaxStatistics(player.name);
+            }
+        } else {
+            statsCache[auth] = new HaxStatistics(player.name);
+        }
+    }
+
+    // 2. Operujemy na szybkiej pamięci RAM (statsCache)
+    var stats = statsCache[auth];
     var pComp = getPlayerComp(player);
-    var storageKey = authArray[player.id][0];
-    
-    if (storageKey && localStorage.getItem(storageKey)) {
-        try {
-            var parsed = JSON.parse(localStorage.getItem(storageKey));
-            if (parsed && typeof parsed === 'object') Object.assign(stats, parsed);
-        } catch (_) {}
-    }
 
-    stats.games = Number(stats.games) || 0;
-    stats.wins = Number(stats.wins) || 0;
-    stats.losses = Number(stats.losses) || 0;
+    // Aktualizacja danych
     stats.games++;
-    
-    // --- SYSTEM MONET (POPRAWIONY) ---
-    var earnedCoins = 0;
-    
-    if (lastWinner == teamStats) {
-        stats.wins++;
-        earnedCoins += COIN_RATES.WIN;
-    } else if (lastWinner !== Team.SPECTATORS) {
-        stats.losses++;
-        earnedCoins += COIN_RATES.LOSS;
-    }
-    
-    var g = getGoalsPlayer(pComp);
-    var a = getAssistsPlayer(pComp);
-    var cs = getCSPlayer(pComp);
-    var minutes = getGametimePlayer(pComp) / 60;
-
+    if (lastWinner == teamStats) stats.wins++;
     stats.winrate = ((100 * stats.wins) / (stats.games || 1)).toFixed(1) + `%`;
-    stats.goals += g;
-    stats.assists += a;
-    stats.ownGoals += getOwnGoalsPlayer(pComp);
-    stats.CS += cs;
-    stats.playtime += getGametimePlayer(pComp);
     
-    // Bonusy
-    earnedCoins += (g * COIN_RATES.GOAL);
-    earnedCoins += (a * COIN_RATES.ASSIST);
-    earnedCoins += (cs * COIN_RATES.CS);
-    earnedCoins += Math.floor(minutes * COIN_RATES.PLAYTIME_PER_MIN);
+    stats.goals += getGoalsPlayer(pComp);
+    stats.assists += getAssistsPlayer(pComp);
+    stats.ownGoals += getOwnGoalsPlayer(pComp);
+    stats.CS += getCSPlayer(pComp);
+    stats.playtime += getGametimePlayer(pComp);
+    stats.playerName = player.name; // Aktualizacja nicku
 
-    if (earnedCoins > 0) {
-        addCoins(player, earnedCoins);
-        // Komunikat dla gracza o zarobku
-        room.sendAnnouncement(`💰 Zarobiłeś ${earnedCoins} monet za ten mecz!`, player.id, 0xFFD700, 'small', HaxNotification.NONE);
-    }
-    // --------------------
 
-    localStorage.setItem(storageKey, JSON.stringify(stats));
 }
 
 function updateStats() {
