@@ -1,7 +1,7 @@
 /* ROOM */
 const roomName = '🏆⚽ |Futsal 3v3| Pod Sraczem | ⚽🏆';
 const maxPlayers = 18;
-const roomPublic = true;
+const roomPublic = false;
 const token = "thr1.AAAAAGmbc80VYg_K-HrS9g.wJ5uAHC0OgA"; // Insert token here
 
 var roomWebhook = 'https://discord.com/api/webhooks/1417845044651626566/vZdV_vQDAU1n4dcwJnTWKUYYVQZExQrRd0HoC8gvXgQkIupqHfZplwt_ZtYRzVfsNxmT'; // Logi
@@ -437,7 +437,26 @@ function sanitizeBanListForStorage(list) {
     }
     return sanitized;
 }
-
+/* --- FUNKCJA POMOCNICZA DO ODCZYTU STATYSTYK --- */
+function getStats(auth) {
+    // 1. Najpierw sprawdzamy RAM (szybko)
+    if (statsCache[auth]) {
+        return statsCache[auth];
+    }
+    // 2. Jak nie ma w RAM, sprawdzamy dysk (wolno)
+    var fromDisk = localStorage.getItem(auth);
+    if (fromDisk) {
+        try {
+            var parsed = JSON.parse(fromDisk);
+            statsCache[auth] = parsed; // Zapisz do RAM na przyszłość!
+            return parsed;
+        } catch (e) {
+            return null;
+        }
+    }
+    return null;
+}
+/* ----------------------------------------------- */
 function persistBanState() {
     try {
         if (typeof localStorage === 'undefined' || typeof localStorage.setItem !== 'function') return;
@@ -1458,6 +1477,29 @@ cieszynki: {
         function: shopCommand,
         category: "EKO",
     },
+    report: {
+        aliases: ['admin', 'pomoc'],
+        roles: Role.PLAYER,
+        desc: "Wzywa admina na discordzie (używaj tylko w nagłych wypadkach!)",
+        function: (player, message) => {
+            var msgArray = message.split(/ +/).slice(1);
+            var reason = msgArray.join(" ") || "Brak powodu";
+            
+            room.sendAnnouncement("Wysłano zgłoszenie do administracji!", player.id, successColor, "bold");
+            
+            // Wysyłamy na webhooka (użyj swojego URL do kanału adminów)
+            if (roomWebhook) { // lub inny dedykowany webhook
+                fetch(roomWebhook, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        content: `🚨 **WEZWANIE ADMINA**\nGracz: **${player.name}**\nPowód: ${reason}\n<@Moderator>`, // Dodaj ID roli żeby dostać powiadomienie
+                        username: "System Zgłoszeń"
+                    }),
+                    headers: { 'Content-Type': 'application/json' }
+                });
+            }
+        },
+    },
     addcoins: {
         aliases: ['givecoins'],
         roles: Role.MASTER,
@@ -2467,27 +2509,36 @@ function globalStatsCommand(player, message) {
 
 function renameCommand(player, message) {
     var msgArray = message.split(/ +/).slice(1);
-    var storageKey = getPlayerAuth(player);
-    if (storageKey && localStorage.getItem(storageKey)) {
-        var stats = JSON.parse(localStorage.getItem(storageKey));
+    
+    // Zabezpieczenie: czy authArray istnieje
+    if (!authArray[player.id]) return;
+    var auth = authArray[player.id][0];
+
+    // Używamy szybkiego odczytu
+    var stats = getStats(auth);
+
+    if (stats) {
+        // Aktualizujemy tylko w pamięci RAM (bez laga!)
         if (msgArray.length == 0) {
             stats.playerName = player.name;
         } else {
             stats.playerName = msgArray.join(' ');
         }
-        localStorage.setItem(storageKey, JSON.stringify(stats));
+        
+        // Nie musisz robić setItem, bo saveStatsToDisk zrobi to w tle
+        
         room.sendAnnouncement(
-            `PrzechrzciĹ‚eĹ› siÄ™ skutecznie ${stats.playerName} !`,
+            `Przechrzciłeś się skutecznie na ${stats.playerName} !`,
             player.id,
-            successColor,
+            successColor, // Upewnij się że masz zdefiniowany successColor (np. 0x75ff75)
             'bold',
             HaxNotification.CHAT
         );
     } else {
         room.sendAnnouncement(
-            `Jeszcze tu nie grałeś`,
+            `Jeszcze tu nie grałeś (brak statystyk)`,
             player.id,
-            errorColor,
+            errorColor, // Upewnij się że masz zdefiniowany errorColor (np. 0xa40000)
             'bold',
             HaxNotification.CHAT
         );
@@ -7158,18 +7209,15 @@ function printUnifiedStatsLine(targetPlayer){
         key = storedAuth;
       }
     }catch(_){}
-
-    // Wczytaj staty bezpiecznie
+// Wczytaj staty bezpiecznie (SZYBKO Z RAM)
     let st = new HaxStatistics(targetPlayer?.name || "");
-    try{
-      if (typeof localStorage !== "undefined" && localStorage.getItem) {
-        const raw = localStorage.getItem(String(key));
-        if (raw) {
-          const data = JSON.parse(raw);
-          if (data && typeof data === "object") Object.assign(st, data);
-        }
-      }
-    }catch(_){/* ignoruj uszkodzone JSON */}
+    
+    // Używamy naszej nowej funkcji getStats!
+    const cachedStats = getStats(String(key));
+    
+    if (cachedStats) {
+        Object.assign(st, cachedStats);
+    }
 
     // Pola
     const games   = Number(st.games)    || 0;
