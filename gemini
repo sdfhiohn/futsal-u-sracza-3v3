@@ -1,8 +1,8 @@
 /* ROOM */
 const roomName = '🏆⚽ |Futsal 3v3| Pod Sraczem | ⚽🏆';
 const maxPlayers = 18;
-const roomPublic = false;
-const token = "thr1.AAAAAGmbc80VYg_K-HrS9g.wJ5uAHC0OgA"; // Insert token here
+const roomPublic = true;
+const token = "thr1.AAAAAGk4pf4F-1SHx2ugxg.yJuDUDPTktY"; // Insert token here
 
 var roomWebhook = 'https://discord.com/api/webhooks/1417845044651626566/vZdV_vQDAU1n4dcwJnTWKUYYVQZExQrRd0HoC8gvXgQkIupqHfZplwt_ZtYRzVfsNxmT'; // Logi
 var gameWebhook = 'https://discord.com/api/webhooks/1417844778112122973/eTZ_4hNdpMXgzUR68Brw9bQbyzhhptNj3oh-2SS8BPjQLlFmX5UPbzQqV4DaJgcxWjDx'; //  raporty meczow
@@ -121,11 +121,11 @@ var roomPassword = '';
 
 /* OPTIONS */
 
-var drawTimeLimit = 1;
+var drawTimeLimit = 2;
 var teamSize = 3;
 var maxAdmins = 0;
 var disableBans = false;
-var debugMode = true;
+var debugMode = false;
 var afkLimit = debugMode ? Infinity : 12;
 
 var defaultSlowMode = 0.5;
@@ -135,17 +135,6 @@ var SMSet = new Set();
 
 var hideClaimMessage = true;
 var mentionPlayersUnpause = true;
-var statsCache = {}; 
-function saveStatsToDisk() {
-    for (var auth in statsCache) {
-        if (statsCache.hasOwnProperty(auth)) {
-            localStorage.setItem(auth, JSON.stringify(statsCache[auth]));
-        }
-    }
-}
-
-// Zapisuj na dysk automatycznie co 60 sekund (zamiast przy każdym golu)
-setInterval(saveStatsToDisk, 60000);
 
 /* OBJECTS */
 
@@ -437,26 +426,7 @@ function sanitizeBanListForStorage(list) {
     }
     return sanitized;
 }
-/* --- FUNKCJA POMOCNICZA DO ODCZYTU STATYSTYK --- */
-function getStats(auth) {
-    // 1. Najpierw sprawdzamy RAM (szybko)
-    if (statsCache[auth]) {
-        return statsCache[auth];
-    }
-    // 2. Jak nie ma w RAM, sprawdzamy dysk (wolno)
-    var fromDisk = localStorage.getItem(auth);
-    if (fromDisk) {
-        try {
-            var parsed = JSON.parse(fromDisk);
-            statsCache[auth] = parsed; // Zapisz do RAM na przyszłość!
-            return parsed;
-        } catch (e) {
-            return null;
-        }
-    }
-    return null;
-}
-/* ----------------------------------------------- */
+
 function persistBanState() {
     try {
         if (typeof localStorage === 'undefined' || typeof localStorage.setItem !== 'function') return;
@@ -1477,29 +1447,6 @@ cieszynki: {
         function: shopCommand,
         category: "EKO",
     },
-    report: {
-        aliases: ['admin', 'pomoc'],
-        roles: Role.PLAYER,
-        desc: "Wzywa admina na discordzie (używaj tylko w nagłych wypadkach!)",
-        function: (player, message) => {
-            var msgArray = message.split(/ +/).slice(1);
-            var reason = msgArray.join(" ") || "Brak powodu";
-            
-            room.sendAnnouncement("Wysłano zgłoszenie do administracji!", player.id, successColor, "bold");
-            
-            // Wysyłamy na webhooka (użyj swojego URL do kanału adminów)
-            if (roomWebhook) { // lub inny dedykowany webhook
-                fetch(roomWebhook, {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        content: `🚨 **WEZWANIE ADMINA**\nGracz: **${player.name}**\nPowód: ${reason}\n<@Moderator>`, // Dodaj ID roli żeby dostać powiadomienie
-                        username: "System Zgłoszeń"
-                    }),
-                    headers: { 'Content-Type': 'application/json' }
-                });
-            }
-        },
-    },
     addcoins: {
         aliases: ['givecoins'],
         roles: Role.MASTER,
@@ -1805,6 +1752,10 @@ function inferIndicatorRange(target){
 
 function identifyIndicatorDiscs() {
     resetIndicatorTargets();
+    
+    // ZMIANA: Markery aktywne TYLKO na mapie Big (na innych wyłączamy)
+    if (currentStadium !== 'big') return;
+
     try {
         if (typeof room.getDiscCount !== "function" || typeof room.getDiscProperties !== "function") return;
         const total = room.getDiscCount();
@@ -1817,8 +1768,8 @@ function identifyIndicatorDiscs() {
             const ry = (typeof props.y === "number") ? props.y : 0;
             const radius = (typeof props.radius === "number") ? props.radius : 0;
             
-            // Szukamy kulek u góry (zakres Y>-80 odrzuca bramki, a łapie wskaźniki)
-            if (ry > -80) continue; 
+            // Szukamy kulek u góry
+            if (ry > -80) continue;
             if (Math.abs(rx) > 100) continue; 
             if (!Number.isFinite(radius) || radius <= 0) continue;
             
@@ -1840,17 +1791,13 @@ function identifyIndicatorDiscs() {
 
         const pressureCandidate = candidates[0];
         
-        // --- FIX: WYMUSZAMY IDEALNĄ WYSOKOŚĆ ---
-        // Zamiast ufać grawitacji, ustawiamy Y na sztywno w zależności od mapy
-        let forcedY = pressureCandidate.y;
-        if (currentStadium === 'big') forcedY = -267.11619301217; // Oryginalna wysokość Big
-        else if (currentStadium === 'classic') forcedY = -219.63388138578978; // Oryginalna wysokość Classic
-        else if (currentStadium === 'training') forcedY = -220;
+        // ZMIANA: Nowa wysokość dla mapy "Vehax" (odczytana z kodu mapy)
+        let forcedY = -285; 
 
         configureIndicatorTarget(indicatorState.pressure, pressureCandidate.index, pressureCandidate.x, forcedY, pressureCandidate.radius);
         indicatorState.pressure.range = 135;
         
-        // Blokujemy fizykę i ustawiamy na poprawnej wysokości
+        // Blokujemy fizykę i ustawiamy pozycję
         room.setDiscProperties(pressureCandidate.index, { invMass: 0, xspeed: 0, yspeed: 0, y: forcedY });
 
         const possessionCandidate = candidates.find(c => c.index !== pressureCandidate.index);
@@ -2509,36 +2456,27 @@ function globalStatsCommand(player, message) {
 
 function renameCommand(player, message) {
     var msgArray = message.split(/ +/).slice(1);
-    
-    // Zabezpieczenie: czy authArray istnieje
-    if (!authArray[player.id]) return;
-    var auth = authArray[player.id][0];
-
-    // Używamy szybkiego odczytu
-    var stats = getStats(auth);
-
-    if (stats) {
-        // Aktualizujemy tylko w pamięci RAM (bez laga!)
+    var storageKey = getPlayerAuth(player);
+    if (storageKey && localStorage.getItem(storageKey)) {
+        var stats = JSON.parse(localStorage.getItem(storageKey));
         if (msgArray.length == 0) {
             stats.playerName = player.name;
         } else {
             stats.playerName = msgArray.join(' ');
         }
-        
-        // Nie musisz robić setItem, bo saveStatsToDisk zrobi to w tle
-        
+        localStorage.setItem(storageKey, JSON.stringify(stats));
         room.sendAnnouncement(
-            `Przechrzciłeś się skutecznie na ${stats.playerName} !`,
+            `PrzechrzciĹ‚eĹ› siÄ™ skutecznie ${stats.playerName} !`,
             player.id,
-            successColor, // Upewnij się że masz zdefiniowany successColor (np. 0x75ff75)
+            successColor,
             'bold',
             HaxNotification.CHAT
         );
     } else {
         room.sendAnnouncement(
-            `Jeszcze tu nie grałeś (brak statystyk)`,
+            `Jeszcze tu nie grałeś`,
             player.id,
-            errorColor, // Upewnij się że masz zdefiniowany errorColor (np. 0xa40000)
+            errorColor,
             'bold',
             HaxNotification.CHAT
         );
@@ -3937,7 +3875,7 @@ function checkTime() {
           // włączamy złotego gola (dogrywka)
           goldenGoal = true;
           room.sendAnnouncement(
-            '⚽ Złoty gol! Została minuta do remisu!',
+            '⚽ Złoty gol! Zostały 2 minuty do remisu! ⚽',
             null,                 // DO WSZYSTKICH – nie ma tu player.id
             announcementColor,
             'bold',
@@ -5343,17 +5281,25 @@ function decrementMatchCelebrations() {
     if (changed) saveCoinStore();
 }
 
-function playCelebration(player) {
-    if (!player) return;
-    var auth = getAuthIdByPlayer(player);
-    if (!coinStore.isCelebrationQueued) coinStore.isCelebrationQueued = {};
+function playCelebration(scorer) {
+    if (!scorer) return;
     
-    if (!coinStore.activeCelebration[auth] || coinStore.isCelebrationQueued[auth] !== true) return;
+    var auth = getAuthIdByPlayer(scorer);
+
+    // 1. Jeśli nie ma włączonej cieszynki -> STOP (Nic się nie dzieje)
+    if (!coinStore.activeCelebration || !coinStore.activeCelebration[auth]) return;
+    
+    // 2. Jeśli ma cieszynkę, ale ją wyłączył (!cieszynki wylacz) -> STOP
+    if (!coinStore.isCelebrationQueued) coinStore.isCelebrationQueued = {};
+    if (coinStore.isCelebrationQueued[auth] !== true) return;
     
     var animId = coinStore.activeCelebration[auth];
     var animData = CELEBRATION_TYPES[animId];
+    
+    // Jeśli z jakiegoś powodu ID jest błędne (np. stara 'domyslna') -> STOP
     if (!animData) return;
     
+    // 3. Sprawdzanie ważności (Mecze / Czas)
     if (coinStore.ownedCelebrations && coinStore.ownedCelebrations[auth]) {
         var hasIt = coinStore.ownedCelebrations[auth].find(c => c.id === animId);
         var isValid = false;
@@ -5361,32 +5307,61 @@ function playCelebration(player) {
             if (hasIt.matches !== undefined && hasIt.matches > 0) isValid = true;
             else if (hasIt.expires !== undefined && hasIt.expires > Date.now()) isValid = true;
         }
+
         if (!isValid) {
+            // Wygasła -> czyścimy i informujemy gracza
             delete coinStore.activeCelebration[auth];
             delete coinStore.isCelebrationQueued[auth];
             saveCoinStore();
+            room.sendAnnouncement(`❌ Twoja cieszynka "${animData.name}" wygasła!`, scorer.id, errorColor, 'small', HaxNotification.CHAT);
             return; 
         }
     }
     
+    // 4. URUCHOMIENIE ANIMACJI (Dla całej drużyny strzelca!)
     var frames = animData.frames;
     var interval = animData.interval;
-    var duration = 3000;
-    var originalAvatar = player.avatar;
-    var originalColor = player.team == Team.RED ? 0xE56E56 : 0x5689E5;
-    try { var disc = room.getPlayerDiscProperties(player.id); if (disc) originalColor = disc.color; } catch(e){}
+    var duration = 3000; // 3 sekundy
+
+    // Pobieramy kolegów z drużyny
+    var teamPlayers = [];
+    if (scorer.team === Team.RED) teamPlayers = teamRed;
+    else if (scorer.team === Team.BLUE) teamPlayers = teamBlue;
+    else teamPlayers = [scorer]; // Fallback
+
+    // Zapamiętujemy stare awatary, żeby je potem oddać
+    var originalAvatars = {};
+    teamPlayers.forEach(p => {
+        originalAvatars[p.id] = p.avatar;
+    });
 
     var steps = Math.floor(duration / interval);
     var currentStep = 0;
+
     var animLoop = setInterval(() => {
-        if (!room.getPlayer(player.id)) { clearInterval(animLoop); return; }
-        try { var icon = frames[currentStep % frames.length]; room.setPlayerAvatar(player.id, icon); } catch(e){}
-        var randomColor = Math.floor(Math.random()*16777215);
-        try { room.setPlayerDiscProperties(player.id, { color: randomColor }); } catch(e){}
+        // Filtrujemy graczy, którzy nadal są w pokoju (żeby nie było błędu jak ktoś wyjdzie)
+        var currentTargets = teamPlayers.filter(p => room.getPlayer(p.id));
+        
+        if (currentTargets.length === 0) {
+            clearInterval(animLoop);
+            return;
+        }
+
+        // Zmiana samej ikonki (Bez kolorów = Bez lagów)
+        try { 
+            var icon = frames[currentStep % frames.length]; 
+            currentTargets.forEach(p => {
+                room.setPlayerAvatar(p.id, icon); 
+            });
+        } catch(e){}
+
         currentStep++;
         if (currentStep >= steps) {
             clearInterval(animLoop);
-            try { room.setPlayerAvatar(player.id, originalAvatar); room.setPlayerDiscProperties(player.id, { color: originalColor }); } catch(e){}
+            // KONIEC: Przywracamy każdemu jego stary awatar
+            currentTargets.forEach(p => {
+                try { room.setPlayerAvatar(p.id, originalAvatars[p.id]); } catch(e){}
+            });
         }
     }, interval);
 }
@@ -5415,7 +5390,7 @@ function getGoalString(team) {
     var scores = game.scores;
     var goalAttribution = getGoalAttribution(team);
     if (goalAttribution[0] != null) {
-        playCelebration(attribution[0]); // <--- DODAJ TO
+        playCelebration(goalAttribution[0]); // <--- POPRAWKA: 'goalAttribution'
         if (goalAttribution[0].team == team) {
             if (goalAttribution[1] != null && goalAttribution[1].team == team) {
                 goalString = `⚽ ${getTimeGame(scores.time)} Gola strzelił  ${goalAttribution[0].name} ! Asystował ${goalAttribution[1].name}. Prędkość piłki : ${ballSpeed.toFixed(2)}km/h.`;
@@ -5452,42 +5427,59 @@ function getGoalString(team) {
 /* ROOM STATS FUNCTIONS */
 
 function updatePlayerStats(player, teamStats) {
-    // Zabezpieczenie: jeśli nie ma gracza w authArray, nic nie rób
-    if (!authArray[player.id]) return;
-
-    var auth = authArray[player.id][0]; 
+    var stats = new HaxStatistics(player.name);
+    var pComp = getPlayerComp(player);
+    var storageKey = authArray[player.id][0];
     
-    // 1. Jeśli nie mamy statystyk w RAM, spróbuj pobrać z dysku lub stwórz nowe
-    if (!statsCache[auth]) {
-        var fromDisk = localStorage.getItem(auth);
-        if (fromDisk) {
-            try {
-                statsCache[auth] = JSON.parse(fromDisk);
-            } catch (e) {
-                statsCache[auth] = new HaxStatistics(player.name);
-            }
-        } else {
-            statsCache[auth] = new HaxStatistics(player.name);
-        }
+    if (storageKey && localStorage.getItem(storageKey)) {
+        try {
+            var parsed = JSON.parse(localStorage.getItem(storageKey));
+            if (parsed && typeof parsed === 'object') Object.assign(stats, parsed);
+        } catch (_) {}
     }
 
-    // 2. Operujemy na szybkiej pamięci RAM (statsCache)
-    var stats = statsCache[auth];
-    var pComp = getPlayerComp(player);
-
-    // Aktualizacja danych
+    stats.games = Number(stats.games) || 0;
+    stats.wins = Number(stats.wins) || 0;
+    stats.losses = Number(stats.losses) || 0;
     stats.games++;
-    if (lastWinner == teamStats) stats.wins++;
-    stats.winrate = ((100 * stats.wins) / (stats.games || 1)).toFixed(1) + `%`;
     
-    stats.goals += getGoalsPlayer(pComp);
-    stats.assists += getAssistsPlayer(pComp);
+    // --- SYSTEM MONET (POPRAWIONY) ---
+    var earnedCoins = 0;
+    
+    if (lastWinner == teamStats) {
+        stats.wins++;
+        earnedCoins += COIN_RATES.WIN;
+    } else if (lastWinner !== Team.SPECTATORS) {
+        stats.losses++;
+        earnedCoins += COIN_RATES.LOSS;
+    }
+    
+    var g = getGoalsPlayer(pComp);
+    var a = getAssistsPlayer(pComp);
+    var cs = getCSPlayer(pComp);
+    var minutes = getGametimePlayer(pComp) / 60;
+
+    stats.winrate = ((100 * stats.wins) / (stats.games || 1)).toFixed(1) + `%`;
+    stats.goals += g;
+    stats.assists += a;
     stats.ownGoals += getOwnGoalsPlayer(pComp);
-    stats.CS += getCSPlayer(pComp);
+    stats.CS += cs;
     stats.playtime += getGametimePlayer(pComp);
-    stats.playerName = player.name; // Aktualizacja nicku
+    
+    // Bonusy
+    earnedCoins += (g * COIN_RATES.GOAL);
+    earnedCoins += (a * COIN_RATES.ASSIST);
+    earnedCoins += (cs * COIN_RATES.CS);
+    earnedCoins += Math.floor(minutes * COIN_RATES.PLAYTIME_PER_MIN);
 
+    if (earnedCoins > 0) {
+        addCoins(player, earnedCoins);
+        // Komunikat dla gracza o zarobku
+        room.sendAnnouncement(`💰 Zarobiłeś ${earnedCoins} monet za ten mecz!`, player.id, 0xFFD700, 'small', HaxNotification.NONE);
+    }
+    // --------------------
 
+    localStorage.setItem(storageKey, JSON.stringify(stats));
 }
 
 function updateStats() {
@@ -7209,15 +7201,18 @@ function printUnifiedStatsLine(targetPlayer){
         key = storedAuth;
       }
     }catch(_){}
-// Wczytaj staty bezpiecznie (SZYBKO Z RAM)
+
+    // Wczytaj staty bezpiecznie
     let st = new HaxStatistics(targetPlayer?.name || "");
-    
-    // Używamy naszej nowej funkcji getStats!
-    const cachedStats = getStats(String(key));
-    
-    if (cachedStats) {
-        Object.assign(st, cachedStats);
-    }
+    try{
+      if (typeof localStorage !== "undefined" && localStorage.getItem) {
+        const raw = localStorage.getItem(String(key));
+        if (raw) {
+          const data = JSON.parse(raw);
+          if (data && typeof data === "object") Object.assign(st, data);
+        }
+      }
+    }catch(_){/* ignoruj uszkodzone JSON */}
 
     // Pola
     const games   = Number(st.games)    || 0;
@@ -8068,12 +8063,12 @@ function slotsCommand(player, message) {
 
 // --- BAZA CIESZYNEK (ANIMACJE) ---
 const CELEBRATION_TYPES = {
-    'domyslna': { name: "Klasyk", frames: ["⚽", "🏃", "🥅", "🙌"], interval: 400 },
-    'money':    { name: "Deszcz Monet", frames: ["💸", "💰", "🤑", "💲", "🏦"], interval: 250 },
-    'fire':     { name: "Płomień", frames: ["🔥", "💥", "🧨", "🌋", "🚬"], interval: 200 },
-    'king':     { name: "Koronacja", frames: ["👑", "🤴", "🏰", "🛡️", "⚔️"], interval: 500 },
-    'ghost':    { name: "Duch", frames: ["👻", "💀", "☠️", "🌑", "👀"], interval: 300 },
-    'dance':    { name: "Taniec", frames: ["💃", "🕺", "👯", "🩰", "🎶"], interval: 250 }
+    // interval: szybkość zmiany emotek w ms
+    'money':    { name: "Deszcz Monet", frames: ["💸", "💰", "🤑", "💲", "🏦"], interval: 150 },
+    'fire':     { name: "Płomień", frames: ["🔥", "💥", "🧨", "🌋", "🚬"], interval: 120 },
+    'king':     { name: "Koronacja", frames: ["👑", "🤴", "🏰", "🛡️", "⚔️"], interval: 300 },
+    'ghost':    { name: "Duch", frames: ["👻", "💀", "☠️", "🌑", "👀"], interval: 180 },
+    'dance':    { name: "Taniec", frames: ["💃", "🕺", "👯", "🩰", "🎶"], interval: 150 }
 };
 
 const SHOP_ITEMS = {
@@ -8300,67 +8295,70 @@ function myCelebrationsCommand(player, message) {
     if (!coinStore.activeCelebration) coinStore.activeCelebration = {};
     if (!coinStore.isCelebrationQueued) coinStore.isCelebrationQueued = {};
 
-    if (msgArray.length > 1 && ['wlacz', 'wylacz', 'queue', 'dequeue'].includes(msgArray[1].toLowerCase())) {
-        let action = msgArray[1].toLowerCase();
+    // Obsługa włączania/wyłączania
+    if (msgArray.length > 1 && ['wlacz', 'wylacz', 'on', 'off'].includes(msgArray[1].toLowerCase())) {
         if (!coinStore.activeCelebration[auth]) {
-            room.sendAnnouncement(`❌ Nie masz wybranej cieszynki.`, player.id, errorColor, 'bold', HaxNotification.CHAT);
+            room.sendAnnouncement(`❌ Nie masz wybranej cieszynki. Kup coś w !sklep i wybierz numerem.`, player.id, errorColor, 'bold', HaxNotification.CHAT);
             return;
         }
-        let currentChoice = coinStore.activeCelebration[auth];
-        let cieszynkaName = CELEBRATION_TYPES[currentChoice]?.name || "Wybrana";
+        let action = msgArray[1].toLowerCase();
+        let isOn = (action === 'wlacz' || action === 'on');
         
-        if (action === 'wlacz' || action === 'queue') {
-            coinStore.isCelebrationQueued[auth] = true;
-            room.sendAnnouncement(`✅ Cieszynka "${cieszynkaName}" włączona!`, player.id, successColor, 'bold', HaxNotification.CHAT);
-        } else {
-            coinStore.isCelebrationQueued[auth] = false;
-            room.sendAnnouncement(`💤 Cieszynka "${cieszynkaName}" wyłączona.`, player.id, infoColor, 'bold', HaxNotification.CHAT);
-        }
+        coinStore.isCelebrationQueued[auth] = isOn;
         saveCoinStore();
+        
+        let statusMsg = isOn ? "włączona ✅" : "wyłączona 💤";
+        room.sendAnnouncement(`Cieszynka została ${statusMsg}.`, player.id, isOn ? successColor : infoColor, 'bold', HaxNotification.CHAT);
         return;
     }
 
-    if (msgArray.length > 2 && ['wybierz', 'set'].includes(msgArray[1].toLowerCase())) {
+    // Obsługa wybierania numerem
+    if (msgArray.length > 2 && ['wybierz', 'set', 'use'].includes(msgArray[1].toLowerCase())) {
         var index = parseInt(msgArray[2]) - 1;
         var list = coinStore.ownedCelebrations[auth] || [];
         list = list.filter(c => (c.matches !== undefined && c.matches > 0) || (c.expires !== undefined && c.expires > Date.now()));
 
         if (msgArray[2] === '0') {
             delete coinStore.activeCelebration[auth];
-            delete coinStore.isCelebrationQueued[auth];
+            coinStore.isCelebrationQueued[auth] = false;
             saveCoinStore();
-            room.sendAnnouncement(`❌ Cieszynka wyłączona.`, player.id, successColor, 'bold', HaxNotification.CHAT);
+            room.sendAnnouncement(`❌ Cieszynka wyłączona (Brak).`, player.id, successColor, 'bold', HaxNotification.CHAT);
             return;
         }
 
         if (index >= 0 && index < list.length) {
             coinStore.activeCelebration[auth] = list[index].id;
-            coinStore.isCelebrationQueued[auth] = true;
+            coinStore.isCelebrationQueued[auth] = true; // Auto-włączenie przy wyborze
             saveCoinStore();
-            room.sendAnnouncement(`🕺 Ustawiono: ${list[index].name}.`, player.id, successColor, 'bold', HaxNotification.CHAT);
+            room.sendAnnouncement(`🕺 Wybrano: ${list[index].name}. Będzie aktywna po Twoim golu!`, player.id, successColor, 'bold', HaxNotification.CHAT);
         } else {
-            room.sendAnnouncement(`❌ Błędny numer.`, player.id, errorColor, 'bold', HaxNotification.CHAT);
+            room.sendAnnouncement(`❌ Nieprawidłowy numer. Sprawdź listę poniżej.`, player.id, errorColor, 'bold', HaxNotification.CHAT);
         }
         return;
     }
 
+    // Wyświetlanie listy
     var list = coinStore.ownedCelebrations[auth] || [];
     list = list.filter(c => (c.matches !== undefined && c.matches > 0) || (c.expires !== undefined && c.expires > Date.now()));
+
     var activeId = coinStore.activeCelebration[auth];
     var isQueued = coinStore.isCelebrationQueued[auth] === true;
     var queueStatus = isQueued ? " (WŁĄCZONA)" : " (WYŁĄCZONA)";
 
-    room.sendAnnouncement(`🕺 Twoje Cieszynki (użyj: !cieszynki wybierz/wlacz/wylacz):`, player.id, announcementColor, 'bold', HaxNotification.CHAT);
-    var defStatus = (!activeId) ? " [BRAK] ✅" : "";
-    room.sendAnnouncement(`0. Wyłącz animację${defStatus}`, player.id, infoColor, 'small', HaxNotification.CHAT);
+    room.sendAnnouncement(`🕺 Twoje Cieszynki (wpisz: !cieszynki wybierz <numer>):`, player.id, announcementColor, 'bold', HaxNotification.CHAT);
+    
+    var defStatus = (!activeId) ? " [AKTYWNE] ✅" : "";
+    room.sendAnnouncement(`0. BRAK (Wyłącz animację)${defStatus}`, player.id, infoColor, 'small', HaxNotification.CHAT);
 
     if (list.length === 0) {
-        room.sendAnnouncement(`(Brak kupionych cieszynek)`, player.id, infoColor, 'small', HaxNotification.CHAT);
+        room.sendAnnouncement(`(Pusto. Kup coś w !sklep)`, player.id, infoColor, 'small', HaxNotification.CHAT);
     } else {
         for (var i = 0; i < list.length; i++) {
             var c = list[i];
-            var status = (activeId === c.id) ? " [AKTYWNA] ✅" + queueStatus : "";
-            var infoStr = c.matches !== undefined ? `pozostało: ${c.matches} meczów` : `ważna: ${(c.expires - Date.now())/86400000|0} dni`;
+            var status = (activeId === c.id) ? ` [AKTYWNA] ✅${queueStatus}` : "";
+            var infoStr = c.matches !== undefined ? `${c.matches} meczów` : `dni: ${(c.expires - Date.now())/86400000|0}`;
+            
+            // TU GRACZ WIDZI NUMEREK (i + 1)
             room.sendAnnouncement(`${i + 1}. ${c.name} (${infoStr})${status}`, player.id, 0xFFD700, 'bold', HaxNotification.CHAT);
         }
     }
